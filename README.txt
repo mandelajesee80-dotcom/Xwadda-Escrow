@@ -1,30 +1,44 @@
-XWADDA ESCROW  (works with ONLY these two files: index.html + README.txt)
+XWADDA ESCROW
 
-HOW TO GET THE SITE BACK UP (GitHub Pages)
-1. Open your repo Xwadda-Escrow on GitHub.
-2. Click index.html > pencil icon (or Add file > Upload files) and replace it with the new index.html. Commit.
-3. Repo > Settings > Pages > Source: "Deploy from a branch", Branch: main, folder: / (root). Save.
-4. Wait about 1 minute, then open  https://YOUR-USERNAME.github.io/Xwadda-Escrow/
-   Press Ctrl+Shift+R (hard refresh) if you still see the old page.
+FILES (put all four in the MAIN folder of your GitHub repo)
+  index.html   the website
+  server.js    the server that connects buyer and seller on different phones
+  package.json tells the host how to start the server
+  README.txt   this file
 
-WHY IT WENT DOWN BEFORE
-The old index.html needed a Node server (server.js) for accounts, deals and chat. GitHub Pages cannot run a server, so
-every button failed. This new index.html contains its own built-in engine and runs by itself, with no server.
+HOW THE TWO PEOPLE GET CONNECTED
+Buyer and seller each use their own phone. The server keeps accounts, deals, chat and balances in one place, so both see
+the same deal room. The person who creates the deal shares the JOIN CODE (XWJ-XXXX-XXXX) or the invite link from the deal
+room. The other person opens it, signs in or creates an account, presses "Join deal", and is placed in the opposite role.
 
-DEMO MODE (what you get on GitHub Pages)
-- Everything works: sign up, deals, join codes, chat bot, fees, wallet, USDT kiosk, scam check, admin dashboard.
-- Data is saved in THAT browser only (localStorage). A buyer on one phone will NOT see a seller on another phone.
-  To test a full deal, use one browser: create account A, create a deal, sign out, create account B, join with the code.
-- Nobody is admin by default. To see the Admin dashboard, put YOUR email in the admins list (see OPTIONAL SETTINGS) and
-  sign up with that email. In demo mode the admin screen only shows data stored in that same browser, so it is for testing only.
-- Do not use demo mode for real customer money. Anyone can clear or change their own browser data.
+PUT IT ONLINE ON RENDER (the website AND the server run together, no separate hosting needed)
+1. Upload index.html, server.js, package.json and README.txt to your GitHub repo (replace old copies).
+2. Go to render.com, sign in with GitHub, click New > Web Service, pick your Xwadda-Escrow repo.
+3. Settings:  Runtime: Node.   Build command: leave empty (or: npm install).   Start command: node server.js
+4. Environment variables (Environment tab):
+     ADMIN_EMAILS = your-email@example.com        (the email you will sign up with to get the Admin dashboard)
+     TRUST_PROXY  = 1
+     DATA_FILE    = /var/data/db.json
+5. SAVING DATA (important): Render's free plan erases all files every time the server restarts, sleeps or redeploys, so
+   accounts and deals would disappear. For real use choose a PAID instance, open the Disks tab, add a disk with Mount path
+   /var/data, and keep DATA_FILE=/var/data/db.json. Free is fine for a quick test only.
+6. Deploy. Render gives you an address like https://xwadda-escrow.onrender.com . Open it on two phones to test.
+7. Your own domain: in Render > Settings > Custom Domains add xwaddaescrow.co.ke and follow the DNS steps it shows.
+   Then delete the CNAME file and turn off GitHub Pages (repo Settings > Pages), so the domain points only to Render.
 
-OPTIONAL SETTINGS (top of index.html, before the first <script>)
-  window.XW_LOCAL={admins:['you@example.com'], rate:129, spread:1.5, payName:'Joshua', payPhone:'0745090132'};
-  Add this line inside the first <script> tag if you want to change the rate, spread, payment name/number or admin emails.
+OPTION B: KEEP THE WEBSITE ON GITHUB PAGES AND ONLY THE SERVER ON RENDER
+Deploy as above, then in index.html change   window.XW_API='';   to   window.XW_API='https://your-render-address';
+and add the variable  ALLOW_ORIGIN = https://your-site-address  on Render. Option A above is simpler.
 
-REAL MULTI-DEVICE MODE (later, when you are ready)
-Run the server version (server.js, package.json) on Render/Railway/a VPS, then in index.html set
-  window.XW_API='https://your-server-address';
-The page automatically uses the server when it can reach it, and falls back to demo mode when it cannot.
-Real money also needs automatic payment checks (M-Pesa Daraja / blockchain) and a security review first.
+WITHOUT A SERVER
+If index.html cannot reach a server it falls back to demo mode: data stays in that one browser only, so two phones can
+NOT see each other. Do not use demo mode for real deals.
+
+ADMIN
+Nobody is admin unless their email is in ADMIN_EMAILS on the server. Sign up with that email to see the Admin dashboard.
+
+BACKUPS AND LIMITS
+- All data is one file (DATA_FILE). Download a copy regularly.
+- M-Pesa and USDT payments are confirmed by hand by an admin ("Confirm funds"). There is no automatic M-Pesa or blockchain
+  check yet, and no email sending, so password reset uses the recovery key shown at sign-up.
+- Before holding real customer money, have the flows reviewed and add automatic payment verification.
