@@ -15,7 +15,8 @@ DEMO MODE (what you get on GitHub Pages)
 - Everything works: sign up, deals, join codes, chat bot, fees, wallet, USDT kiosk, scam check, admin dashboard.
 - Data is saved in THAT browser only (localStorage). A buyer on one phone will NOT see a seller on another phone.
   To test a full deal, use one browser: create account A, create a deal, sign out, create account B, join with the code.
-- In demo mode the FIRST account created in a browser becomes admin so you can try "Confirm funds".
+- Nobody is admin by default. To see the Admin dashboard, put YOUR email in the admins list (see OPTIONAL SETTINGS) and
+  sign up with that email. In demo mode the admin screen only shows data stored in that same browser, so it is for testing only.
 - Do not use demo mode for real customer money. Anyone can clear or change their own browser data.
 
 OPTIONAL SETTINGS (top of index.html, before the first <script>)
