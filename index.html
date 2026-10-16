@@ -108,7 +108,7 @@ footer{margin-top:60px;background:linear-gradient(180deg,#0b2a6b,#071a45);color:
 
 <script>
 // ===== Demo state (in memory). Replace with real backend calls. =====
-var U=null,deals=[],cur=null,RATE=129,SPR=1.5,USERS={};
+var U=null,deals=[],cur=null,RATE=129,SPR=1.5,USERS=loadUsers(),ADMIN_EMAILS=[];
 var ADDR={"USDT BEP20":"0xc08aad31945e614cab90012b9da4dfa53a3ddc2c","USDT TRC20":"TPwAc1xBpMssGYh2ioX7x8QL9PXZStPNLP"};
 var CC=[['KE','🇰🇪','+254'],['UG','🇺🇬','+256'],['TZ','🇹🇿','+255'],['RW','🇷🇼','+250'],['ET','🇪🇹','+251'],['NG','🇳🇬','+234'],['GH','🇬🇭','+233'],['ZA','🇿🇦','+27'],['EG','🇪🇬','+20'],['MA','🇲🇦','+212'],['ZM','🇿🇲','+260'],['ZW','🇿🇼','+263'],['CD','🇨🇩','+243'],['SS','🇸🇸','+211'],['SO','🇸🇴','+252'],['AE','🇦🇪','+971'],['SA','🇸🇦','+966'],['QA','🇶🇦','+974'],['TR','🇹🇷','+90'],['IN','🇮🇳','+91'],['PK','🇵🇰','+92'],['CN','🇨🇳','+86'],['JP','🇯🇵','+81'],['SG','🇸🇬','+65'],['MY','🇲🇾','+60'],['PH','🇵🇭','+63'],['ID','🇮🇩','+62'],['AU','🇦🇺','+61'],['GB','🇬🇧','+44'],['IE','🇮🇪','+353'],['DE','🇩🇪','+49'],['FR','🇫🇷','+33'],['IT','🇮🇹','+39'],['ES','🇪🇸','+34'],['NL','🇳🇱','+31'],['SE','🇸🇪','+46'],['CH','🇨🇭','+41'],['US','🇺🇸','+1'],['CA','🇨🇦','+1'],['BR','🇧🇷','+55'],['MX','🇲🇽','+52']];
 function fillCc(){document.querySelectorAll('select.cc').forEach(function(e){if(!e.options.length)e.innerHTML=CC.map(function(c){return '<option value="'+c[2]+'">'+c[1]+' '+c[0]+' '+c[2]+'</option>'}).join('')})}
@@ -126,7 +126,6 @@ function FEES(a){return a<=2000?0:a<=5000?300:a<=20000?400:a<=40000?500:a<=70000
 function tot(d){return d.pay=='Buyer'?d.amt+d.fee:d.pay=='Seller'?d.amt:d.amt+d.fee/2}
 function money(n){return 'KES '+Math.round(n).toLocaleString()}
 function dealId(){var c='ABCDEFGHJKMNPQRSTUVWXYZ23456789',s='';for(var i=0;i<8;i++)s+=c[Math.floor(Math.random()*c.length)];return 'XW-'+s}
-fillCc();pwCheck();
 function kcalc(){$('kPay').classList.add('hide');$('kSell').classList.add('hide');var a=+$('kAmt').value||0,b=$('kAct').value=='buy';$('kOut').textContent=b?'You pay '+money(a*(RATE+1.5)):'You receive '+money(a*(RATE-1.5))}
 function kiosk(){if(!U){toast('Please sign in to trade USDT.');authMode('login');show('auth');return}var a=+$('kAmt').value||0;if(a<=0)return toast('Enter an amount.');if($('kAct').value=='buy'){$('kNum').textContent=PAY.phone;$('kNm').textContent=PAY.name;$('kAm').textContent=money(a*(RATE+1.5));$('kPay').classList.remove('hide')}else{$('kSell').classList.remove('hide');ksell()}}
 function ksell(){var n=$('kNet').value;$('kAd').textContent=n+' address: '+ADDR[n];$('kQr').innerHTML='';new QRCode($('kQr'),{text:ADDR[n],width:150,height:150})}
@@ -148,20 +147,25 @@ function h2b(h){return new Uint8Array(h.match(/../g).map(function(x){return pars
 function hashPw(p,salt){return crypto.subtle.importKey('raw',new TextEncoder().encode(p),'PBKDF2',false,['deriveBits']).then(function(k){return crypto.subtle.deriveBits({name:'PBKDF2',salt:salt,iterations:210000,hash:'SHA-256'},k,256)}).then(b2h)}
 function same(a,b){if(a.length!=b.length)return false;var d=0;for(var i=0;i<a.length;i++)d|=a.charCodeAt(i)^b.charCodeAt(i);return d==0}
 function enter(msg){$('navBtn').textContent='Dashboard';$('navBtn').onclick=function(){show('app')};$('admTab').classList.toggle('hide',!U.admin);show('app');tab('deals');toast(msg)}
+function loadUsers(){try{return JSON.parse(localStorage.getItem('xw_users')||'{}')}catch(e){return {}}}
+function persist(){try{localStorage.setItem('xw_users',JSON.stringify(USERS))}catch(e){}}
+function secure(){return !!(window.crypto&&crypto.subtle&&crypto.getRandomValues)}
 function reg(){var n=$('rName').value.trim(),e=$('rEmail').value.trim(),p=$('rPw').value;
 if(!n||!/\S+@\S+\.\S+/.test(e))return toast('Enter your full name and a valid email.');
 if(USERS[e.toLowerCase()])return toast('An account with this email already exists. Please sign in.');
 var bad=pwRules(p,n,e).filter(function(x){return !x[1]});pwCheck();if(bad.length)return toast('Password is not strong enough yet. See the checklist.');
 if(p!==$('rPw2').value)return toast('Passwords do not match.');
-if(!window.crypto||!crypto.subtle)return toast('Secure password storage needs HTTPS. Open the site at its https:// address.');
+if(!secure())return toast('Secure sign-up needs HTTPS. Open the site at its https:// address.');
 var salt=crypto.getRandomValues(new Uint8Array(16));
-hashPw(p,salt).then(function(h){U={name:n,email:e,admin:/admin/i.test(e),pw:{s:b2h(salt),h:h}};USERS[e.toLowerCase()]=U;$('rPw').value=$('rPw2').value='';pwCheck();enter('Account created. Welcome '+U.name+'!')})}
+hashPw(p,salt).then(function(h){var u={name:n,email:e,admin:ADMIN_EMAILS.indexOf(e.toLowerCase())>-1,pw:{s:b2h(salt),h:h}};USERS[e.toLowerCase()]=u;persist();U=u;try{localStorage.setItem('xw_session',e.toLowerCase())}catch(x){}$('rPw').value=$('rPw2').value='';pwCheck();enter('Account created. Welcome '+U.name+'!')}).catch(function(){toast('Could not create the account. Please try again.')})}
 function login(){var e=$('lEmail').value.trim().toLowerCase(),p=$('lPw').value,t=tries[e]||{n:0,u:0};
+if(!e||!p)return toast('Enter your email and password.');
 if(Date.now()<t.u)return toast('Too many attempts. Try again in a minute.');
-if(!window.crypto||!crypto.subtle)return toast('Secure sign-in needs HTTPS. Open the site at its https:// address.');
+if(!secure())return toast('Secure sign-in needs HTTPS. Open the site at its https:// address.');
 var u=USERS[e],salt=u?h2b(u.pw.s):crypto.getRandomValues(new Uint8Array(16));
-hashPw(p,salt).then(function(h){if(u&&same(h,u.pw.h)){tries[e]={n:0,u:0};U=u;$('lPw').value='';enter('Welcome back, '+U.name+'!')}else{t.n++;if(t.n>=5){t.u=Date.now()+60000;t.n=0}tries[e]=t;toast('Incorrect email or password.')}})}
-function logout(){U=null;deals=[];$('navBtn').textContent='Sign in';$('navBtn').onclick=function(){authMode('login');show('auth')};authMode('login');show('home')}
+hashPw(p,salt).then(function(h){if(u&&same(h,u.pw.h)){tries[e]={n:0,u:0};U=u;U.admin=ADMIN_EMAILS.indexOf(e)>-1;try{localStorage.setItem('xw_session',e)}catch(x){}$('lPw').value='';enter('Welcome back, '+U.name+'!')}else{t.n++;if(t.n>=5){t.u=Date.now()+60000;t.n=0}tries[e]=t;toast('Incorrect email or password.')}}).catch(function(){toast('Sign-in failed. Please try again.')})}
+function logout(){U=null;deals=[];try{localStorage.removeItem('xw_session')}catch(x){}$('navBtn').textContent='Sign in';$('navBtn').onclick=function(){authMode('login');show('auth')};authMode('login');show('home')}
+window.addEventListener('load',function(){var e=null;try{e=localStorage.getItem('xw_session')}catch(x){}if(e&&USERS[e]){U=USERS[e];U.admin=ADMIN_EMAILS.indexOf(e)>-1;enter('Welcome back, '+U.name+'!')}});
 // Deals
 function kesAmt(){var a=+$('dAmt').value||0;return $('dCur').value=='USDT'?Math.round(a*(RATE+SPR)):a}
 function fee(){var a=kesAmt(),f=FEES(a),p=$('dPay').value,o=$('dFee');if(!a){o.textContent='';return}o.textContent=($('dCur').value=='USDT'?'= '+money(a)+'. ':'')+'Fee '+(f?money(f):'KES 0 (free)')+', paid by '+p+'. Buyer pays '+money(tot({amt:a,fee:f,pay:p}))}
@@ -186,7 +190,7 @@ function saveW(){var w={pref:$('wPref').value,mp:fullPhone('wCc',$('wMp').value)
 if(w.bep&&!/^0x[a-fA-F0-9]{40}$/.test(w.bep))return toast('BEP20 address looks wrong. It should start with 0x and be 42 characters.');
 if(w.trc&&!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(w.trc))return toast('TRC20 address looks wrong. It should start with T and be 34 characters.');
 var need=w.pref=='both'?(w.bep&&w.trc):w[w.pref];if(!need)return toast(w.pref=='both'?'Add both the BEP20 and TRC20 addresses, or choose one network.':'Fill in the field for your preferred method.');
-U.w=w;USERS[U.email.toLowerCase()]=U;toast('Payout and refund details saved.')}
+U.w=w;USERS[U.email.toLowerCase()]=U;persist();toast('Payout and refund details saved.')}
 function render(){if(!U)return;loadW();var h='<tr><th>Deal ID</th><th>Item</th><th>Amount</th><th>Status</th><th></th></tr>';
 $('dealList').innerHTML=deals.length?'<table>'+h+deals.map(function(d){return row(d)}).join('')+'</table>':'<span class="mut">No deals yet.</span>';
 $('pName').value=U.name;$('pEmail').value=U.email;var sp=splitPhone(U.phone);$('pCc').value=sp[0];$('pPhone').value=sp[1];
@@ -236,5 +240,6 @@ else if(c=='/human')toast('Connecting you to a human agent…');
 else if(c[0]=='/')bot('Unknown command. Type /help.');
 else bot('Message shared with everyone in this escrow. I will never ask for your M-Pesa PIN or password. Type /help for commands.');
 rdraw()}
-function saveP(){U.name=$('pName').value.trim()||U.name;U.phone=fullPhone('pCc',$('pPhone').value)||U.phone;toast('Profile updated.')}
+function saveP(){U.name=$('pName').value.trim()||U.name;U.phone=fullPhone('pCc',$('pPhone').value)||U.phone;persist();toast('Profile updated.')}
+fillCc();pwCheck();
 </script></body></html>
