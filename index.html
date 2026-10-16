@@ -596,7 +596,7 @@ function fillCc(){document.querySelectorAll('select.cc').forEach(function(e){if(
 function fullPhone(cc,n){n=(n||'').replace(/[^0-9]/g,'').replace(/^0+/,'');return n.length<6?'':$(cc).value+n}
 function splitPhone(p){var m=CC.map(function(c){return c[2]}).sort(function(a,b){return b.length-a.length}).find(function(c){return (p||'').indexOf(c)==0});return m?[m,p.slice(m.length)]:['+254',p||'']}
 function copyCode(c){var ok=function(){toast('Copied: '+c)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(c).then(ok).catch(function(){toast(c)});else toast(c)}
-function copyLink(c){copyCode(location.href.split('#')[0]+'#join='+c)}
+function copyLink(c){copyCode(location.href.split(/[?#]/)[0]+'?join='+encodeURIComponent(c))}
 var MODE=null,MODEP=null;
 function detect(){if(!MODEP)MODEP=(API||location.protocol!='file:'?fetch(API+'/api/health',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){MODE=j&&j.ok?'server':'local'}):Promise.reject()).catch(function(){MODE='local'});return MODEP}
 function localCall(m,p,b){return new Promise(function(res,rej){setTimeout(function(){try{res(XWL.call(m,p,b,TOKEN))}catch(e){var x=new Error(e&&e.s?e.message:'Something went wrong. Please try again.');x.status=(e&&e.s)||500;if(x.status==401&&TOKEN&&p!='/api/login'&&p!='/api/reset')dropSession();rej(x)}},0)})}
@@ -612,16 +612,17 @@ function stopPoll(){if(POLL){clearInterval(POLL);POLL=null}}
 
 // ---------- navigation ----------
 function show(s){$('pub').classList.toggle('hide',s=='app');['home','auth'].forEach(function(x){$(x).classList.toggle('hide',x!=s)});$('app').classList.toggle('hide',s!='app');if(s!='app')stopPoll();window.scrollTo(0,0)}
-function goHome(){location.hash='';show('home')}
-function go(v){if(location.hash=='#'+v)route();else location.hash='#'+v}
+var ROUTE='';
+function goHome(){ROUTE='';show('home')}
+function go(v){ROUTE=v;try{history.pushState({r:v},'',location.href.split(/[?#]/)[0])}catch(e){}route()}
 function toggleMenu(){document.body.classList.toggle('menu')}
 function authMode(m){['Reg:reg','Login:login','Reset:reset','Key:key'].forEach(function(x){x=x.split(':');$('st'+x[0]).classList.toggle('hide',m!=x[1])})}
 function openKiosk(){if(!S.me){toast('Please sign in to trade USDT.');authMode('login');show('auth');try{sessionStorage.setItem('xw_ph','kiosk')}catch(e){}return}go('kiosk')}
 var MENU=[['WORKSPACE MENU',[['dash','▣','Dashboard']]],['DEALS',[['create','+','Create escrow'],['join','↗','Join with a code'],['kiosk','₮','USDT kiosk']]],['ACCOUNT TOOLS',[['numbers','▦','My numbers'],['wallet','◆','Wallet & payouts'],['profile','☺','Profile']]],['DISCOVER',[['scan','⌕','Market scan'],['scam','●','Scam watch']]],['HELP',[['support','?','Support']]]];
 function buildSide(){var m=MENU.slice();if(S.me&&S.me.admin)m=m.concat([['ADMIN',[['admin','★','Admin dashboard']]]]);
-  $('side').innerHTML=m.map(function(g){return '<h6>'+g[0]+'</h6>'+g[1].map(function(i){return '<a href="#'+i[0]+'" data-v="'+i[0]+'"><i>'+i[1]+'</i>'+i[2]+'</a>'}).join('')}).join('')+'<hr><a onclick="logout()"><i>⎋</i>Sign out</a>'}
+  $('side').innerHTML=m.map(function(g){return '<h6>'+g[0]+'</h6>'+g[1].map(function(i){return '<a onclick="go(\''+i[0]+'\')" data-v="'+i[0]+'"><i>'+i[1]+'</i>'+i[2]+'</a>'}).join('')}).join('')+'<hr><a onclick="logout()"><i>⎋</i>Sign out</a>'}
 function route(){
-  var h=location.hash.replace(/^#/,''),m=/^join=(.+)$/.exec(h);
+  var h=ROUTE,m=/^join=(.+)$/.exec(h);
   if(!S.me){if(m){try{sessionStorage.setItem('xw_pj',decodeURIComponent(m[1]))}catch(e){}toast('Sign in (or create an account) to join the deal.');authMode('login');show('auth')}return}
   var v=m?'join':(h.split('/')[0]||'dash'),arg=m?decodeURIComponent(m[1]):h.split('/')[1];
   if(!VIEWS[v]){v='dash';arg=null}if(v=='admin'&&!S.me.admin)v='dash';
@@ -630,7 +631,7 @@ function route(){
 function showView(v,arg){stopPoll();CUR=v;document.body.classList.remove('menu');
   var hl=v=='room'||v=='fund'?'dash':v;document.querySelectorAll('.side a').forEach(function(a){a.classList.toggle('on',a.getAttribute('data-v')==hl)});
   $('view').innerHTML='<p class="mut">Loading…</p>';VIEWS[v](arg)}
-window.addEventListener('hashchange',function(){var h=location.hash;if(h==''||h=='#')return;route()});
+window.addEventListener('popstate',function(e){ROUTE=(e.state&&e.state.r)||'';if(S.me)route();else show('home')});
 
 // ---------- accounts ----------
 var BADPW=['password','passw0rd','qwerty','123456','abcdef','letmein','welcome','iloveyou','admin','xwadda','escrow','mpesa'],pendMsg='';
@@ -645,7 +646,7 @@ function showKey(key,msg){pendMsg=msg;$('kShow').textContent=key;$('kOk').checke
 function keyDone(){if(!$('kOk').checked)return toast('Tick the box to confirm you saved your recovery key.');$('kShow').textContent='';enter(pendMsg)}
 function enter(msg){$('navBtn').textContent='Dashboard';$('navBtn').onclick=function(){show('app');go('dash')};buildSide();
   var pj=null,ph=null;try{pj=sessionStorage.getItem('xw_pj');ph=sessionStorage.getItem('xw_ph');sessionStorage.removeItem('xw_pj');sessionStorage.removeItem('xw_ph')}catch(e){}
-  if(pj)location.hash='#join='+encodeURIComponent(pj);else if(ph)location.hash='#'+ph;else if(!location.hash||location.hash=='#')location.hash='#dash';
+  if(pj)ROUTE='join='+encodeURIComponent(pj);else if(ph)ROUTE=ph;else if(!ROUTE)ROUTE='dash';
   route();if(msg)toast(msg)}
 function reg(){var n=$('rName').value.trim(),e=$('rEmail').value.trim(),p=$('rPw').value;
   if(!n||!/\S+@\S+\.\S+/.test(e))return toast('Enter your full name and a valid email.');
@@ -657,7 +658,7 @@ function login(){var e=$('lEmail').value.trim(),p=$('lPw').value;if(!e||!p)retur
 function resetPw(){var p=$('sPw').value;if(p!==$('sPw2').value)return toast('Passwords do not match.');
   api('POST','/api/reset',{email:$('sEmail').value.trim(),key:$('sKey').value,password:p}).then(function(r){setSession(r);$('sKey').value=$('sPw').value=$('sPw2').value='';showKey(r.recoveryKey,'Password changed. Welcome back, '+r.user.name+'!')}).catch(fail)}
 function logout(){api('POST','/api/logout',{}).catch(function(){});TOKEN=null;S.me=null;stopPoll();try{localStorage.removeItem('xw_token')}catch(e){}
-  $('navBtn').textContent='Sign in';$('navBtn').onclick=function(){authMode('login');show('auth')};authMode('login');location.hash='';show('home')}
+  $('navBtn').textContent='Sign in';$('navBtn').onclick=function(){authMode('login');show('auth')};authMode('login');ROUTE='';show('home')}
 
 // ---------- shared pieces ----------
 function balCard(){var b=S.me.bal||0;return '<div class="bal"><small>AVAILABLE BALANCE</small><div class="n">'+money(b)+'</div><div>'+usd(toUsdt(b,0))+'</div><div class="btns"><button class="wh" onclick="go(\'wallet\')">Withdraw</button><button onclick="go(\'create\')">Create escrow</button><button onclick="go(\'join\')">Join with a code</button></div></div>'}
@@ -815,6 +816,9 @@ function adDeal(id,a){if((a=='release'||a=='refund')&&!confirm((a=='release'?'Re
 function homeRates(){api('GET','/api/config').then(function(c){S.cfg.rate=c.rate;S.cfg.spr=c.spr;$('hBuy').textContent='KES '+(c.rate+c.spr).toFixed(2);$('hSell').textContent='KES '+(c.rate-c.spr).toFixed(2)}).catch(function(){
   $('srvBanner').classList.remove('hide')})}
 window.addEventListener('load',function(){fillCc();pwCheck();homeRates();
+  var jm=/[?&]join=([^&#]+)/.exec(location.search)||/#join=([^&]+)/.exec(location.hash);
+  if(jm){try{ROUTE='join='+jm[1]}catch(e){}}
+  try{if(location.search||location.hash)history.replaceState(null,'',location.href.split(/[?#]/)[0])}catch(e){}
   if(TOKEN)api('GET','/api/me').then(function(r){S.me=r.user;S.cfg=r.cfg;enter()}).catch(function(){});
   else route()});
 </script></body></html>
