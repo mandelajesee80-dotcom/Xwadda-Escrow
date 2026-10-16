@@ -1,0 +1,212 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Xwadda Escrow</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+:root{--bg:#fff;--fg:#0b1b3a;--card:#f1f5fd;--mut:#5a6b8c;--ac:#1d4ed8;--bd:#d6e0f2;--on:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0a1224;--fg:#e8eefc;--card:#111d38;--mut:#9fb0d3;--ac:#4d86ff;--bd:#22345c}}
+:root[data-theme=dark]{--bg:#0a1224;--fg:#e8eefc;--card:#111d38;--mut:#9fb0d3;--ac:#4d86ff;--bd:#22345c}
+*{box-sizing:border-box}html,body{margin:0}body{background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.w{max-width:1000px;margin:auto;padding:0 18px}
+nav{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid var(--bd)}
+.logo{display:flex;align-items:center;gap:8px;font-weight:800;font-size:20px;color:var(--ac)}.logo img{height:30px}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .logo img{filter:invert(1)}}:root[data-theme=dark] .logo img{filter:invert(1)}
+.band{background:var(--bg);color:var(--fg);border:1px solid var(--bd);border-top:4px solid var(--ac);border-radius:14px;padding:28px 22px}.band .bh{color:var(--ac)}.band .st{border-top:2px solid var(--ac);padding-top:10px}.band small{color:var(--ac);letter-spacing:.08em;font-size:12px;font-weight:700}.band p{color:var(--mut);margin:6px 0 0}
+.tint{background:#e6eefc;color:#0b1b3a}@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .tint{background:#16264a;color:#e8eefc}}
+button,.btn{background:var(--ac);color:var(--on);border:0;border-radius:8px;padding:10px 16px;font:inherit;font-weight:600;cursor:pointer}
+button.g{background:transparent;color:var(--fg);border:1px solid var(--bd)}
+button.sm{padding:6px 10px;font-size:14px}
+h1{font-size:clamp(28px,5vw,46px);line-height:1.1;margin:40px 0 12px}h2{margin:44px 0 14px}
+.mut{color:var(--mut)}.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px}
+.stat b{display:block;font-size:26px;color:var(--ac)}
+input,select{width:100%;padding:10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;margin:4px 0 10px}
+label{font-size:14px;color:var(--mut)}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0}
+.tbl{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--bd);white-space:nowrap}
+.tag{padding:2px 8px;border-radius:99px;font-size:12px;background:var(--bd)}
+.hide{display:none}#toast{position:fixed;left:12px;right:12px;bottom:calc(14px + env(safe-area-inset-bottom,0px));background:var(--fg);color:var(--bg);padding:12px 14px;border-radius:10px;display:none;z-index:9;max-width:480px;margin:auto}
+footer{margin-top:60px;background:linear-gradient(180deg,#0b2a6b,#071a45);color:#c9d8f5;font-size:14px;padding:36px 0 calc(24px + env(safe-area-inset-bottom,0px))}footer .fg{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}footer b{color:#fff}footer a{color:#8fb4ff;cursor:pointer;display:block;margin:4px 0}footer .fb{margin-top:26px;padding-top:16px;border-top:1px solid #2a4585;color:#8fb4ff}
+.ph{display:flex;gap:6px}.ph select{width:46%;margin-right:0}.ph input{margin-right:0}
+.fee{border-top:4px solid var(--ac)}.fee th{background:var(--ac);color:#fff;border-bottom:0}.fee td b{color:var(--ac)}.feeh{color:var(--ac)}.feen{background:#e6eefc;color:#0b1b3a;border-left:4px solid var(--ac);border-radius:8px;padding:10px 14px}@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .feen{background:#16264a;color:#e8eefc}}:root[data-theme=dark] .feen{background:#16264a;color:#e8eefc}
+.cv{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.addr{word-break:break-all;font-family:ui-monospace,monospace;font-size:13px}
+</style></head><body>
+<div class="w">
+<nav><span class="logo"><img src="data:image/png;base64,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" alt="XW"> Xwadda Escrow</span><span><button class="g sm" onclick="show('home')">Home</button> <button class="sm" id="navBtn" onclick="show('auth')">Sign in</button></span></nav>
+
+<!-- HOME -->
+<section id="home">
+<h1>Buy and sell safely.<br>Funds held until both sides are happy.</h1>
+<p class="mut">Pay with M-Pesa (KES) or USDT (BEP20, TRC20). Funds convert between KES and USDT automatically. Every deal gets its own unique Deal ID.</p>
+<p><button onclick="show('auth')">Start an escrow deal</button> <button class="g" onclick="location.hash='#kiosk';document.getElementById('kiosk').scrollIntoView()">USDT kiosk</button></p>
+<div class="grid" style="margin-top:24px">
+<div class="card stat"><b>70,000+</b>trusted since 2023</div>
+<div class="card stat"><b>127k+</b>active users</div>
+<div class="card stat"><b>24/7</b>customer support</div></div>
+
+<h2>How escrow works</h2><div class="band"><h2 class="bh" style="margin:0 0 6px">Four steps from agreement to payout</h2><p style="margin:0 0 20px">Every deal follows the same order, so both sides know what comes next.</p><div class="grid"><div class="st"><small>STEP 1</small><h3 style="margin:4px 0">Agree the terms</h3><p>Buyer and seller settle the item, the price, the delivery method and how long the buyer has to inspect it. We record it.</p></div><div class="st"><small>STEP 2</small><h3 style="margin:4px 0">Buyer pays into escrow</h3><p>The buyer sends the agreed amount to the escrow account shown for that deal, by M-Pesa or cryptocurrency. We confirm it arrived.</p></div><div class="st"><small>STEP 3</small><h3 style="margin:4px 0">Seller delivers</h3><p>Once we tell the seller the funds are held, they hand over the goods or complete the work. The buyer checks it against the agreed terms.</p></div><div class="st"><small>STEP 4</small><h3 style="margin:4px 0">Release or dispute</h3><p>The buyer confirms and we pay the seller, less our fee. If something is wrong, the buyer raises a dispute and we review it before any money moves.</p></div></div></div>
+
+<h2 class="feeh">One fee, shown before you pay</h2><p class="feen">The fee is taken from the deal amount and shown on the deal page before the buyer sends any money. No hidden charges. Fee paid by: Buyer, Seller or Split 50-50 (you choose per deal).</p><div class="card tbl fee"><table><tr><th>Deal value</th><th>Escrow fee (KES)</th><th>Approx. in USD</th></tr><tr><td>KES 0 to 2,000</td><td><b>KES 0</b></td><td>USD 0.00</td></tr><tr><td>KES 2,001 to 5,000</td><td><b>KES 300</b></td><td>USD 2.31</td></tr><tr><td>KES 5,001 to 20,000</td><td><b>KES 400</b></td><td>USD 3.08</td></tr><tr><td>KES 20,001 to 40,000</td><td><b>KES 500</b></td><td>USD 3.85</td></tr><tr><td>KES 40,001 to 70,000</td><td><b>KES 600</b></td><td>USD 4.62</td></tr><tr><td>KES 70,001 to 100,000</td><td><b>KES 1,000</b></td><td>USD 7.70</td></tr><tr><td>Above KES 100,000</td><td><b>Contact us for a quote</b></td><td>Contact us</td></tr></table><p class="mut" style="margin:8px 0 0">Fees are charged in Kenya shillings. USD amounts are approximate at KES 130 to USD 1 and change with the exchange rate.</p></div>
+
+<h2>How to tell the real Xwadda Escrow from a copy</h2><p class="mut">Fake escrow sites are a common scam. Check these before you send money to anyone, including us.</p><div class="grid"><div class="card tint"><b>What we do</b><p>Show the escrow payment details on your deal page at xwaddaescrow.co.ke.</p><p>Confirm to both sides when funds are received.</p><p>Release money only after the buyer confirms or a dispute is settled.</p></div><div class="card"><b>What we never do</b><p>Ask for your M-Pesa PIN or your bank password.</p><p>Ask you to pay to any number that is not shown on your deal page or kiosk order page at xwaddaescrow.co.ke.</p><p>Ask you to pay by gift card or airtime, or to any crypto wallet that is not shown on your deal page.</p><p>Release funds because a seller or buyer says we should, without the steps above.</p></div></div>
+
+<h2 id="kiosk">USDT kiosk: instant buy / sell</h2>
+<div class="card" style="max-width:420px">
+<label>Action</label><select id="kAct" onchange="kcalc()"><option value="buy">Buy USDT (pay M-Pesa)</option><option value="sell">Sell USDT (get M-Pesa)</option></select>
+<label>Amount (USDT)</label><input id="kAmt" type="number" value="100" oninput="kcalc()">
+<p id="kOut" style="font-weight:700"></p><button onclick="kiosk()">Continue</button><div id="kPay" class="hide" style="margin-top:14px"><div class="card tint"><p style="margin:0">Send <b id="kAm"></b> by M-Pesa (Send Money) to:</p><p style="font-size:22px;font-weight:800;margin:6px 0" id="kNum"></p><p style="margin:0">Name: <b id="kNm"></b></p></div><label style="display:block;margin-top:12px">Where should we send your USDT?</label><select id="kPl"><option>Binance ID</option><option>Bitget ID</option><option>Bybit ID</option></select><input id="kId" placeholder="Your exchange ID (UID)"><button onclick="kdone()">I have paid</button></div><div id="kSell" class="hide" style="margin-top:14px"><label>Send your USDT to (choose network)</label><select id="kNet" onchange="ksell()"><option>USDT BEP20</option><option>USDT TRC20</option></select><div id="kQr" style="background:#fff;padding:10px;display:inline-block;border-radius:8px"></div><p class="addr" id="kAd"></p><label>M-Pesa number to receive your KES</label><div class="ph"><select class="cc" id="kCc"></select><input id="kPh" type="tel" placeholder="Phone number"></div><button onclick="ksdone()">I have sent the USDT</button></div></div>
+
+<h2>Client feedback</h2><div class="grid"><div class="card"><i>“I was nervous about paying a supplier I had never met. xWadda held my M-Pesa payment until the goods arrived exactly as promised. I will never trade without escrow again.”</i><hr style="border:0;border-top:1px solid var(--bd)"><b>Amina Wanjiru</b><div class="mut" style="font-size:14px">Retail Buyer, Nairobi</div></div><div class="card"><i>“As a seller, the biggest fear is shipping goods and never getting paid. With xWadda the funds were already secured before I dispatched anything. Total peace of mind.”</i><hr style="border:0;border-top:1px solid var(--bd)"><b>David Okonkwo</b><div class="mut" style="font-size:14px">Electronics Supplier, Lagos</div></div><div class="card"><i>“We used xWadda for a crypto-for-services deal. The wallet release only triggered after our client confirmed delivery. Clean, fast and completely transparent.”</i><hr style="border:0;border-top:1px solid var(--bd)"><b>Thandiwe Mokoena</b><div class="mut" style="font-size:14px">Freelance Developer, Cape Town</div></div></div>
+</section>
+
+<!-- AUTH -->
+<section id="auth" class="hide"><div class="card" style="max-width:420px;margin:40px auto">
+<div id="stReg"><h2 style="margin-top:0">Create account</h2>
+<label>Full name</label><input id="rName"><label>Email</label><input id="rEmail" type="email"><label>Phone</label><div class="ph"><select class="cc" id="rCc"></select><input id="rPhone" type="tel" placeholder="Phone number"></div>
+<button onclick="reg()">Send email OTP</button><p class="mut">Tip: use an email containing “admin” to see the admin dashboard.</p></div>
+<div id="stOtp" class="hide"><h2 style="margin-top:0">Verify email</h2><p class="mut">Enter the 6-digit code sent to your email.</p>
+<input id="otp" maxlength="6" inputmode="numeric"><button onclick="verify()">Verify</button></div></div></section>
+
+<!-- APP -->
+<section id="app" class="hide">
+<div class="tabs"><button class="g sm" onclick="tab('deals')">My deals</button><button class="g sm" onclick="tab('new')">New deal</button><button class="g sm" onclick="tab('profile')">Profile</button><button class="g sm hide" id="admTab" onclick="tab('admin')">Admin</button><button class="g sm" onclick="logout()">Logout</button></div>
+<div id="t-deals"><h2 style="margin-top:0">My deals</h2><div class="card tbl" id="dealList"></div></div>
+<div id="t-new" class="hide"><h2 style="margin-top:0">New escrow deal</h2><div class="card" style="max-width:460px">
+<label>Description</label><input id="dDesc"><label>Other party email (their name is picked up automatically)</label><input id="dCp" type="email">
+<label>I am the</label><select id="dRole"><option>Buyer</option><option>Seller</option></select><label>Amount</label><div class="ph"><select id="dCur" onchange="fee()" style="width:36%"><option>KES</option><option>USDT</option></select><input id="dAmt" type="number" oninput="fee()"></div><label>Fee paid by</label><select id="dPay" onchange="fee()"><option>Buyer</option><option>Seller</option><option>Split 50-50</option></select><p id="dFee" class="mut"></p><button onclick="mk()">Create deal</button></div></div>
+<div id="t-fund" class="hide"><h2 style="margin-top:0">Fund <span id="fId"></span></h2><div class="card" style="max-width:460px">
+<p>Deal total: <b id="fTot"></b></p><p class="mut" id="fConv" style="margin-top:-6px"></p><label>Method</label>
+<select id="fM" onchange="fm()"><option value="mpesa">M-Pesa (KES)</option><option>USDT BEP20</option><option>USDT TRC20</option></select>
+<div id="fMp"><div class="card tint"><p style="margin:0">Send <b id="fAm"></b> by M-Pesa (Send Money) to:</p><p style="font-size:22px;font-weight:800;margin:6px 0" id="fNum"></p><p style="margin:0">Name: <b id="fNm"></b></p><p style="margin:6px 0 0;font-size:14px">Add Deal ID <b id="fRef"></b> in your payment note if you can.</p></div><button onclick="paid()" style="margin-top:12px">I have sent the payment</button></div>
+<div id="fCr" class="hide"><div class="card tint" style="margin-bottom:10px"><p style="margin:0">Send exactly <b id="fUs"></b> to the address below. We convert it to KES for the deal automatically.</p></div><div id="qr" style="background:#fff;padding:10px;display:inline-block;border-radius:8px"></div><p class="addr" id="fAd"></p>
+<button onclick="paid()">I have sent the payment</button></div>
+<div class="card" style="margin-top:14px"><b>Currency converter</b><div class="cv"><div><label>KES</label><input id="cvK" type="number" oninput="cv('k')"></div><div><label>USDT</label><input id="cvU" type="number" oninput="cv('u')"></div></div><p class="mut" id="cvR" style="margin:0"></p></div></div></div>
+<div id="t-room" class="hide"><div class="card" style="padding:0;overflow:hidden;max-width:640px"><div style="background:#0b2a6b;color:#fff;padding:14px 16px;display:flex;justify-content:space-between;gap:8px"><div><b>🤖 Xwadda Escrow Bot</b><div style="font-size:12px">Secure transaction room · online · <span id="rId"></span></div></div><span style="font-size:13px">🔒 Protected</span></div><div id="rPeople" style="padding:10px 12px;display:flex;gap:8px;flex-wrap:wrap"></div><div style="padding:0 12px 10px"><button class="g sm" onclick="toast('Connecting you to a human agent…')">🎧 Connect live human support</button> <button class="g sm" onclick="$('rHelp').classList.toggle('hide')">✨ Useful prompts</button></div><div id="rHelp" class="hide" style="padding:0 12px 10px"></div><div id="rMsgs" style="height:320px;overflow-y:auto;padding:12px;background:var(--card)"></div><div id="rAct" style="padding:8px 12px"></div><div style="display:flex;gap:8px;padding:10px 12px"><input id="rIn" placeholder="Write a message to everyone in this escrow" style="margin:0" onkeydown="if(event.key=='Enter')rsend()"><button onclick="rsend()">Send</button></div></div></div>
+<div id="t-profile" class="hide"><h2 style="margin-top:0">Profile</h2><div class="card" style="max-width:420px">
+<label>Name</label><input id="pName"><label>Email (verified)</label><input id="pEmail" disabled><label>Phone</label><div class="ph"><select class="cc" id="pCc"></select><input id="pPhone" type="tel"></div><button onclick="saveP()">Save changes</button></div>
+<h2>Payout &amp; refund details</h2><div class="card" style="max-width:420px"><p class="mut" style="margin-top:0">Where we send your money when a deal is released to you (payout) or cancelled (refund). Fill in one or more.</p>
+<label>Preferred method</label><select id="wPref"><option value="mpesa">M-Pesa</option><option value="bin">Binance ID</option><option value="byb">Bybit ID</option><option value="bg">Bitget ID</option><option value="bep">USDT BEP20</option><option value="trc">USDT TRC20</option><option value="both">USDT BEP20 + TRC20 (both)</option></select>
+<label>M-Pesa number</label><div class="ph"><select class="cc" id="wCc"></select><input id="wMp" type="tel" placeholder="Phone number"></div>
+<label>Binance ID</label><input id="wBin"><label>Bybit ID</label><input id="wByb"><label>Bitget ID</label><input id="wBg">
+<label>USDT BEP20 address</label><input id="wBep" placeholder="0x..."><label>USDT TRC20 address</label><input id="wTrc" placeholder="T...">
+<button onclick="saveW()">Save payout details</button></div></div>
+<div id="t-admin" class="hide"><h2 style="margin-top:0">Admin dashboard</h2><div class="grid" id="admStats"></div><h2>All deals</h2><div class="card tbl" id="admList"></div></div>
+</section>
+
+
+</div>
+<footer><div class="w"><div class="fg"><div><b style="font-size:18px">Xwadda Escrow</b><p style="margin:6px 0 0">Funds held safely until both sides are happy.</p></div><div><b>Quick links</b><a onclick="show('home');scrollTo(0,0)">Home</a><a onclick="show('auth')">Sign in</a><a onclick="show('home');document.getElementById('kiosk').scrollIntoView()">USDT kiosk</a></div><div><b>Contact</b><p style="margin:6px 0 0">📍 Westlands Business Park, Nairobi, Kenya<br>24/7 support<br>xwaddaescrow.co.ke</p></div></div><div class="fb">© 2026 Xwadda Escrow · All rights reserved. T&amp;Cs apply</div></div></footer><div id="toast"></div>
+
+<script>
+// ===== Demo state (in memory). Replace with real backend calls. =====
+var U=null,deals=[],cur=null,code=null,RATE=129,SPR=1.5,USERS={};
+var ADDR={"USDT BEP20":"0xc08aad31945e614cab90012b9da4dfa53a3ddc2c","USDT TRC20":"TPwAc1xBpMssGYh2ioX7x8QL9PXZStPNLP"};
+var CC=[['KE','🇰🇪','+254'],['UG','🇺🇬','+256'],['TZ','🇹🇿','+255'],['RW','🇷🇼','+250'],['ET','🇪🇹','+251'],['NG','🇳🇬','+234'],['GH','🇬🇭','+233'],['ZA','🇿🇦','+27'],['EG','🇪🇬','+20'],['MA','🇲🇦','+212'],['ZM','🇿🇲','+260'],['ZW','🇿🇼','+263'],['CD','🇨🇩','+243'],['SS','🇸🇸','+211'],['SO','🇸🇴','+252'],['AE','🇦🇪','+971'],['SA','🇸🇦','+966'],['QA','🇶🇦','+974'],['TR','🇹🇷','+90'],['IN','🇮🇳','+91'],['PK','🇵🇰','+92'],['CN','🇨🇳','+86'],['JP','🇯🇵','+81'],['SG','🇸🇬','+65'],['MY','🇲🇾','+60'],['PH','🇵🇭','+63'],['ID','🇮🇩','+62'],['AU','🇦🇺','+61'],['GB','🇬🇧','+44'],['IE','🇮🇪','+353'],['DE','🇩🇪','+49'],['FR','🇫🇷','+33'],['IT','🇮🇹','+39'],['ES','🇪🇸','+34'],['NL','🇳🇱','+31'],['SE','🇸🇪','+46'],['CH','🇨🇭','+41'],['US','🇺🇸','+1'],['CA','🇨🇦','+1'],['BR','🇧🇷','+55'],['MX','🇲🇽','+52']];
+function fillCc(){document.querySelectorAll('select.cc').forEach(function(e){if(!e.options.length)e.innerHTML=CC.map(function(c){return '<option value="'+c[2]+'">'+c[1]+' '+c[0]+' '+c[2]+'</option>'}).join('')})}
+function fullPhone(cc,n){n=(n||'').replace(/[^0-9]/g,'').replace(/^0+/,'');return n.length<6?'':$(cc).value+n}
+function splitPhone(p){var m=CC.map(function(c){return c[2]}).sort(function(a,b){return b.length-a.length}).find(function(c){return (p||'').indexOf(c)==0});return m?[m,p.slice(m.length)]:['+254',p||'']}
+function toUsdt(k,buy){return k/(buy?RATE-SPR:RATE+SPR)}
+function usd(n){return n.toFixed(2)+' USDT'}
+function net(d){return d.pay=='Seller'?d.amt-d.fee:d.pay=='Split 50-50'?d.amt-d.fee/2:d.amt}
+function nameOf(e){e=(e||'').toLowerCase();if(USERS[e])return USERS[e].name;var p=e.split('@')[0].replace(/[._-]+/g,' ').trim();return p?p.replace(/\b\w/g,function(c){return c.toUpperCase()}):'Awaiting join'}
+var $=function(i){return document.getElementById(i)};
+function toast(m){var t=$('toast');t.textContent=m;t.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(function(){t.style.display='none'},5000)}
+function show(s){['home','auth','app'].forEach(function(x){$(x).classList.toggle('hide',x!=s)})}
+function tab(n){['deals','new','fund','room','profile','admin'].forEach(function(x){$('t-'+x).classList.toggle('hide',x!=n)});render()}
+function FEES(a){return a<=2000?0:a<=5000?300:a<=20000?400:a<=40000?500:a<=70000?600:a<=100000?1000:null}
+function tot(d){return d.pay=='Buyer'?d.amt+d.fee:d.pay=='Seller'?d.amt:d.amt+d.fee/2}
+function money(n){return 'KES '+Math.round(n).toLocaleString()}
+function dealId(){var c='ABCDEFGHJKMNPQRSTUVWXYZ23456789',s='';for(var i=0;i<8;i++)s+=c[Math.floor(Math.random()*c.length)];return 'XW-'+s}
+fillCc();
+function kcalc(){$('kPay').classList.add('hide');$('kSell').classList.add('hide');var a=+$('kAmt').value||0,b=$('kAct').value=='buy';$('kOut').textContent=b?'You pay '+money(a*(RATE+1.5)):'You receive '+money(a*(RATE-1.5))}
+function kiosk(){if(!U){toast('Please sign in to trade USDT.');show('auth');return}var a=+$('kAmt').value||0;if(a<=0)return toast('Enter an amount.');if($('kAct').value=='buy'){$('kNum').textContent=PAY.phone;$('kNm').textContent=PAY.name;$('kAm').textContent=money(a*(RATE+1.5));$('kPay').classList.remove('hide')}else{$('kSell').classList.remove('hide');ksell()}}
+function ksell(){var n=$('kNet').value;$('kAd').textContent=n+' address: '+ADDR[n];$('kQr').innerHTML='';new QRCode($('kQr'),{text:ADDR[n],width:150,height:150})}
+function ksdone(){var kp=fullPhone('kCc',$('kPh').value);if(!kp)return toast('Enter the number to receive your KES.');toast('Thanks. Once your USDT is confirmed on-chain we will send KES to '+kp+'.');$('kSell').classList.add('hide')}
+function kdone(){var i=$('kId').value.trim();if(!i)return toast('Enter your '+$('kPl').value+'.');toast('Order received. We will send '+$('kAmt').value+' USDT to your '+$('kPl').value+' '+i+' once payment is confirmed.');$('kPay').classList.add('hide')}
+kcalc();
+// Registration + email OTP
+function reg(){var n=$('rName').value.trim(),e=$('rEmail').value.trim(),p=fullPhone('rCc',$('rPhone').value);
+if(!n||!/\S+@\S+\.\S+/.test(e)||!p)return toast('Fill all fields correctly.');
+U={name:n,email:e,phone:p,admin:/admin/i.test(e)};USERS[e.toLowerCase()]=U;code=String(Math.floor(100000+Math.random()*900000));
+// BACKEND: POST /api/auth/send-otp -> send email via SMTP. Demo shows code:
+$('stReg').classList.add('hide');$('stOtp').classList.remove('hide');toast('Demo OTP emailed to '+e+': '+code)}
+function verify(){if($('otp').value!==code)return toast('Wrong code.');
+$('navBtn').textContent='Dashboard';$('navBtn').onclick=function(){show('app')};$('admTab').classList.toggle('hide',!U.admin);show('app');tab('deals');toast('Email verified. Welcome '+U.name+'!')}
+function logout(){U=null;deals=[];$('navBtn').textContent='Sign in';$('navBtn').onclick=function(){show('auth')};$('stReg').classList.remove('hide');$('stOtp').classList.add('hide');show('home')}
+// Deals
+function kesAmt(){var a=+$('dAmt').value||0;return $('dCur').value=='USDT'?Math.round(a*(RATE+SPR)):a}
+function fee(){var a=kesAmt(),f=FEES(a),p=$('dPay').value,o=$('dFee');if(!a){o.textContent='';return}if(f===null){o.textContent='Above KES 100,000: contact us for a quote.';return}o.textContent=($('dCur').value=='USDT'?'= '+money(a)+'. ':'')+'Fee '+(f?money(f):'KES 0 (free)')+', paid by '+p+'. Buyer pays '+money(tot({amt:a,fee:f,pay:p}))}
+function mk(){var a=kesAmt();if(!$('dDesc').value||!a)return toast('Add description and amount.');if(FEES(a)===null)return toast('Above KES 100,000: please contact us for a quote.');
+deals.push({id:dealId(),desc:$('dDesc').value,cp:$('dCp').value,role:$('dRole').value,amt:a,fee:FEES(a),pay:$('dPay').value,msgs:[],bc:0,sc:0,st:'Pending',owner:U.email,buyer:$('dRole').value=='Buyer'?U.email:$('dCp').value,seller:$('dRole').value=='Seller'?U.email:$('dCp').value,payout:'KES',at:new Date().toLocaleString()});
+$('dDesc').value=$('dAmt').value=$('dCp').value='';fee();toast('Deal created with unique ID '+deals[deals.length-1].id);tab('deals')}
+function fundOpen(id){cur=deals.find(function(d){return d.id==id});if(!(cur.bc&&cur.sc)){toast('Both parties must confirm in the deal room first.');return room(id)}$('fId').textContent=cur.id;$('fTot').textContent=money(tot(cur));$('fNum').textContent=PAY.phone;$('fNm').textContent=PAY.name;$('fAm').textContent=money(tot(cur));$('fConv').textContent='≈ '+usd(toUsdt(tot(cur),1))+' if paying in USDT (rate 1 USDT = KES '+(RATE-SPR)+')';$('cvK').value=Math.round(tot(cur));cv('k');$('fRef').textContent=cur.id;fm();tab('fund')}
+function fm(){var m=$('fM').value,c=m!='mpesa';$('fMp').classList.toggle('hide',c);$('fCr').classList.toggle('hide',!c);
+if(c){$('fUs').textContent=usd(toUsdt(tot(cur),1))+' ('+m+')';$('fAd').textContent=m+' address: '+ADDR[m];$('qr').innerHTML='';new QRCode($('qr'),{text:ADDR[m],width:160,height:160})}}
+var PAY={name:'Joshua',phone:'0745090132'};
+function cv(w){var k=$('cvK'),u=$('cvU');if(w=='k')u.value=((+k.value||0)/(RATE-SPR)).toFixed(2);else k.value=Math.round((+u.value||0)*(RATE+SPR));$('cvR').textContent='KES to USDT at '+(RATE-SPR)+', USDT to KES at '+(RATE+SPR)+'.'}
+function paid(){cur.st='Verifying';cur.msgs.push({w:'bot',t:'Payment reported by the buyer. We are verifying it and will confirm to both sides when funds are received.',at:now()});toast('Thanks. We will confirm your payment for '+cur.id+' shortly.');tab('deals')}
+function confirmFund(id){act(id,'Funded');deals.find(function(x){return x.id==id}).msgs.push({w:'bot',t:'Funds received and held in escrow. Seller: you can now deliver. Buyer: check the delivery, then type /release or /dispute.',at:now()});toast('Funds confirmed. Receipt emailed to '+U.email+' for '+id)}
+function act(id,s){var d=deals.find(function(d){return d.id==id});d.st=s;if(s=='Released')d.msgs.push({w:'bot',t:'Funds released to '+nameOf(d.seller)+'. Sent to: '+dest(d.seller)+'.',at:now()});if(s=='Refunded')d.msgs.push({w:'bot',t:'Funds refunded to '+nameOf(d.buyer)+'. Sent to: '+dest(d.buyer)+'.',at:now()});render()}
+function row(d,adm){var b='';if(d.st=='Pending'&&!adm)b='<button class="sm" onclick="fundOpen(\''+d.id+'\')">Fund</button>';
+if(d.st=='Verifying'&&adm)b='<button class="sm" onclick="confirmFund(\''+d.id+'\')">Confirm funds</button>';
+if(d.st=='Funded'||(d.st=='Disputed'&&adm))b='<button class="sm" onclick="act(\''+d.id+'\',\'Released\')">Release</button> '+(adm?'<button class="g sm" onclick="act(\''+d.id+'\',\'Refunded\')">Refund</button>':'');
+return '<tr><td>'+d.id+'</td><td>'+d.desc+'</td><td>'+money(d.amt)+'</td><td><span class="tag">'+d.st+'</span></td><td><button class="g sm" onclick="room(\''+d.id+'\')">Room</button> '+b+'</td></tr>'}
+function dest(e){var u=USERS[(e||'').toLowerCase()],w=u&&u.w;if(!w)return 'none saved yet (add under Profile)';var m={mpesa:'M-Pesa '+w.mp,bin:'Binance ID '+w.bin,byb:'Bybit ID '+w.byb,bg:'Bitget ID '+w.bg,bep:'USDT BEP20 '+w.bep,trc:'USDT TRC20 '+w.trc,both:'USDT BEP20 '+(w.bep||'-')+' and TRC20 '+(w.trc||'-')};return m[w.pref]||'none saved yet'}
+function loadW(){var w=U.w||{},sp=splitPhone(w.mp);$('wPref').value=w.pref||'mpesa';$('wCc').value=sp[0];$('wMp').value=sp[1];$('wBin').value=w.bin||'';$('wByb').value=w.byb||'';$('wBg').value=w.bg||'';$('wBep').value=w.bep||'';$('wTrc').value=w.trc||''}
+function saveW(){var w={pref:$('wPref').value,mp:fullPhone('wCc',$('wMp').value),bin:$('wBin').value.trim(),byb:$('wByb').value.trim(),bg:$('wBg').value.trim(),bep:$('wBep').value.trim(),trc:$('wTrc').value.trim()};
+if(w.bep&&!/^0x[a-fA-F0-9]{40}$/.test(w.bep))return toast('BEP20 address looks wrong. It should start with 0x and be 42 characters.');
+if(w.trc&&!/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(w.trc))return toast('TRC20 address looks wrong. It should start with T and be 34 characters.');
+var need=w.pref=='both'?(w.bep&&w.trc):w[w.pref];if(!need)return toast(w.pref=='both'?'Add both the BEP20 and TRC20 addresses, or choose one network.':'Fill in the field for your preferred method.');
+U.w=w;USERS[U.email.toLowerCase()]=U;toast('Payout and refund details saved.')}
+function render(){if(!U)return;loadW();var h='<tr><th>Deal ID</th><th>Item</th><th>Amount</th><th>Status</th><th></th></tr>';
+$('dealList').innerHTML=deals.length?'<table>'+h+deals.map(function(d){return row(d)}).join('')+'</table>':'<span class="mut">No deals yet.</span>';
+$('pName').value=U.name;$('pEmail').value=U.email;var sp=splitPhone(U.phone);$('pCc').value=sp[0];$('pPhone').value=sp[1];
+var f=deals.filter(function(d){return d.st!='Pending'}),vol=f.reduce(function(s,d){return s+d.amt},0),fe=f.reduce(function(s,d){return s+d.fee},0);
+$('admStats').innerHTML=[['Deals',deals.length],['Volume',money(vol)],['Fees earned',money(fe)],['Held in escrow',deals.filter(function(d){return d.st=='Funded'}).length]].map(function(x){return '<div class="card stat"><b>'+x[1]+'</b>'+x[0]+'</div>'}).join('');
+$('admList').innerHTML=deals.length?'<table>'+h+deals.map(function(d){return row(d,1)}).join('')+'</table>':'<span class="mut">No deals.</span>'}
+var rd=null,CMDS=['/help','/status','/fees','/confirm','/release','/dispute','/human'];
+function now(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}
+function esc(t){return String(t).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function bot(t){rd.msgs.push({w:'bot',t:t,at:now()});rdraw()}
+function room(id){rd=deals.find(function(d){return d.id==id});$('rId').textContent=rd.id;var bn=nameOf(rd.buyer),sn=nameOf(rd.seller);
+$('rPeople').innerHTML=[['🤖','Xwadda Escrow Bot','Admin'],['🧑',bn,'Buyer'],['🧑',sn,'Seller']].map(function(p){return `<span class="tag" style="padding:6px 10px">${p[0]} <b>${esc(p[1])}</b> ${p[2]}</span>`}).join('');
+$('rHelp').innerHTML=CMDS.map(function(c){return `<button class="g sm" onclick="$('rIn').value='${c}';rsend()">${c}</button>`}).join(' ');
+if(!rd.msgs.length){bot(`👋 Welcome to the Xwadda Escrow Bot room.
+🔑 Deal ID: ${rd.id}
+📋 Deal: ${rd.desc}
+🧑 Buyer: ${bn}
+🧑 Seller: ${sn}
+⏱ Review window: 1 hour.
+✨ Type /help for useful prompts.`);bot(`I will guide this transaction.
+Amount: ${money(rd.amt)} (≈ ${usd(toUsdt(rd.amt,1))})
+Fee: ${rd.fee?money(rd.fee):'KES 0'} (paid by ${rd.pay})
+Total due from buyer: ${money(tot(rd))} or ${usd(toUsdt(tot(rd),1))}
+Seller payout: ${money(net(rd))} or ${usd(toUsdt(net(rd),0))}
+Payout wallet: ${dest(rd.seller)}
+Refund wallet: ${dest(rd.buyer)}
+Please review the deal and each press Confirm with Bot to continue. No payment details are shown until both confirm.`)}
+tab('room');rdraw()}
+function rdraw(){var m=$('rMsgs');m.innerHTML=rd.msgs.map(function(x){var b=x.w=='bot';return `<div style="max-width:88%;margin:0 0 10px ${b?'0':'auto'};background:${b?'var(--bg)':'var(--ac)'};color:${b?'var(--fg)':'#fff'};border:1px solid var(--bd);border-radius:10px;padding:8px 12px;white-space:pre-line"><b style="font-size:13px">${b?'Xwadda Escrow Bot':esc(x.n||U.name)}</b><br>${esc(x.t)}<div style="font-size:11px;opacity:.7">${x.at}</div></div>`}).join('');m.scrollTop=m.scrollHeight;
+var a='';if(!rd.bc)a+=`<button class="sm" onclick="rconf('b')">✅ Confirm as Buyer</button> `;if(!rd.sc)a+=`<button class="sm" onclick="rconf('s')">✅ Confirm as Seller</button> `;if(rd.bc&&rd.sc&&rd.st=='Pending')a+=`<button class="sm" onclick="fundOpen('${rd.id}')">💳 Fund this deal</button>`;a+=`<div style="margin-top:8px"><label>Seller payout currency</label><select onchange="rd.payout=this.value;bot('Seller payout set to '+(this.value=='KES'?money(net(rd))+' via M-Pesa':usd(toUsdt(net(rd),0))+' in USDT')+'.')"><option${rd.payout=='KES'?' selected':''}>KES</option><option${rd.payout=='USDT'?' selected':''}>USDT</option></select></div>`;$('rAct').innerHTML=a}
+function rconf(w){if(w=='b')rd.bc=1;else rd.sc=1;bot(`${w=='b'?'Buyer '+nameOf(rd.buyer):'Seller '+nameOf(rd.seller)} confirmed the deal terms.`);if(rd.bc&&rd.sc)bot(`Both parties confirmed. Payment details are now unlocked. Buyer: tap Fund this deal and pay exactly ${money(tot(rd))}. Funds stay held until you confirm delivery.`)}
+function rsend(){var i=$('rIn'),t=i.value.trim();if(!t)return;i.value='';rd.msgs.push({w:'me',n:U.name,t:t,at:now()});var c=t.toLowerCase();
+if(c=='/help')bot(`Useful prompts:
+/status deal status
+/fees fee schedule
+/confirm how to confirm
+/release release funds (buyer)
+/dispute raise a dispute
+/human talk to a person`);
+else if(c=='/status')bot(`Deal ${rd.id}: ${rd.st}.
+Buyer confirmed: ${rd.bc?'yes':'no'}. Seller confirmed: ${rd.sc?'yes':'no'}.`);
+else if(c=='/fees')bot(`Fee for this deal: ${rd.fee?money(rd.fee):'KES 0'}, paid by ${rd.pay}. Tiers: up to 2,000 free; to 5,000 KES 300; to 20,000 KES 400; to 40,000 KES 500; to 70,000 KES 600; to 100,000 KES 1,000.`);
+else if(c=='/confirm')bot('Use the Confirm buttons below the chat.');
+else if(c=='/release'){if(rd.st=='Funded'){rd.st='Released';bot('Buyer confirmed delivery. Funds released to '+nameOf(rd.seller)+', less our fee: '+(rd.payout=='USDT'?usd(toUsdt(net(rd),0)):money(net(rd)))+'. Sent to: '+dest(rd.seller)+'.')}else bot('Nothing to release yet. Status: '+rd.st+'.')}
+else if(c=='/dispute'){if(rd.st=='Funded'){rd.st='Disputed';bot('Dispute raised. Funds are frozen and our team will review. Share your evidence here.')}else bot('A dispute can be raised once the deal is funded.')}
+else if(c=='/human')toast('Connecting you to a human agent…');
+else if(c[0]=='/')bot('Unknown command. Type /help.');
+else bot('Message shared with everyone in this escrow. I will never ask for your M-Pesa PIN or password. Type /help for commands.');
+rdraw()}
+function saveP(){U.name=$('pName').value.trim()||U.name;U.phone=fullPhone('pCc',$('pPhone').value)||U.phone;toast('Profile updated.')}
+</script></body></html>
