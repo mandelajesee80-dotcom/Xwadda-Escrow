@@ -6,6 +6,437 @@
 // for example: window.XW_API='https://xwadda-escrow.onrender.com';   Leave '' when the server itself serves this page.
 window.XW_API='';
 </script>
+<script>
+/* ===== Xwadda local engine: runs the whole backend inside the browser when no server is reachable ===== */
+var XWL=(function(){
+var KEY='xw_local_db_v1';
+var CFGL=window.XW_LOCAL||{};
+var ADMINS=(CFGL.admins||[]).map(function(s){return String(s).trim().toLowerCase()}).filter(Boolean);
+var BASE={rate:+CFGL.rate||129,spr:+CFGL.spread||1.5,payName:CFGL.payName||'Joshua',payPhone:CFGL.payPhone||'0745090132',
+ addr:{'USDT BEP20':CFGL.bep20||'0xc08aad31945e614cab90012b9da4dfa53a3ddc2c','USDT TRC20':CFGL.trc20||'TPwAc1xBpMssGYh2ioX7x8QL9PXZStPNLP'}};
+var db={users:{},sessions:{},deals:[],tx:[],orders:[],tickets:[],reports:[],cfg:{},first:''};
+try{Object.assign(db,JSON.parse(localStorage.getItem(KEY)||'{}'))}catch(e){}
+var saveT=null;
+function flush(){try{localStorage.setItem(KEY,JSON.stringify(db))}catch(e){}}
+function save(){if(saveT)return;saveT=setTimeout(function(){saveT=null;flush()},150)}
+window.addEventListener('pagehide',flush);
+(function(){var t=Date.now();for(var k in db.sessions)if(db.sessions[k].x<t)delete db.sessions[k]})();
+
+/* ---- small sync crypto (SHA-256 + PBKDF2) ---- */
+var K=[],H0=[];(function(){var n=2,c=0;while(c<64){var p=1;for(var i=2;i*i<=n;i++)if(n%i==0){p=0;break}if(p){if(c<8)H0[c]=(Math.pow(n,.5)%1*4294967296)|0;K[c]=(Math.pow(n,1/3)%1*4294967296)|0;c++}n++}})();
+function sha256(m){var l=m.length,nb=((l+9+63)>>6)<<6,bf=new Uint8Array(nb);bf.set(m);bf[l]=128;var dv=new DataView(bf.buffer);dv.setUint32(nb-8,Math.floor(l*8/4294967296));dv.setUint32(nb-4,(l*8)>>>0);
+ var h=H0.slice(),w=new Int32Array(64);
+ for(var o=0;o<nb;o+=64){for(var i=0;i<16;i++)w[i]=dv.getInt32(o+i*4);
+  for(i=16;i<64;i++){var x=w[i-15],y=w[i-2];w[i]=(w[i-16]+((x>>>7|x<<25)^(x>>>18|x<<14)^(x>>>3))+w[i-7]+((y>>>17|y<<15)^(y>>>19|y<<13)^(y>>>10)))|0}
+  var a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+  for(i=0;i<64;i++){var t1=(hh+((e>>>6|e<<26)^(e>>>11|e<<21)^(e>>>25|e<<7))+((e&f)^(~e&g))+K[i]+w[i])|0,t2=(((a>>>2|a<<30)^(a>>>13|a<<19)^(a>>>22|a<<10))+((a&b)^(a&c)^(b&c)))|0;hh=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0}
+  h[0]=(h[0]+a)|0;h[1]=(h[1]+b)|0;h[2]=(h[2]+c)|0;h[3]=(h[3]+d)|0;h[4]=(h[4]+e)|0;h[5]=(h[5]+f)|0;h[6]=(h[6]+g)|0;h[7]=(h[7]+hh)|0}
+ var out=new Uint8Array(32),ov=new DataView(out.buffer);for(i=0;i<8;i++)ov.setInt32(i*4,h[i]);return out}
+function cat(a,b){var r=new Uint8Array(a.length+b.length);r.set(a);r.set(b,a.length);return r}
+function hmac(key,msg){if(key.length>64)key=sha256(key);var k=new Uint8Array(64);k.set(key);var i=new Uint8Array(64),o=new Uint8Array(64);for(var j=0;j<64;j++){i[j]=k[j]^54;o[j]=k[j]^92}return sha256(cat(o,sha256(cat(i,msg))))}
+function pbkdf2(pw,salt,iter){var u=hmac(pw,cat(salt,new Uint8Array([0,0,0,1]))),t=u.slice();for(var n=1;n<iter;n++){u=hmac(pw,u);for(var j=0;j<32;j++)t[j]^=u[j]}return t}
+var enc=new TextEncoder();
+function hex(u){var s='';for(var i=0;i<u.length;i++)s+=('0'+u[i].toString(16)).slice(-2);return s}
+function unhex(s){var u=new Uint8Array(s.length/2);for(var i=0;i<u.length;i++)u[i]=parseInt(s.substr(i*2,2),16);return u}
+function rnd(n){var a=new Uint8Array(n);(window.crypto||window.msCrypto).getRandomValues(a);return a}
+var crypto={randomBytes:rnd};
+var scr=function(s,salt){return hex(pbkdf2(enc.encode(s),unhex(salt),3000))};
+function mkHash(s){var salt=hex(rnd(16));return{s:salt,h:scr(s,salt)}}
+function chk(s,o){if(!o)return false;var a=scr(s,o.s),r=0;if(a.length!=o.h.length)return false;for(var i=0;i<a.length;i++)r|=a.charCodeAt(i)^o.h.charCodeAt(i);return r==0}
+var sh=function(t){return hex(sha256(enc.encode(t)))};
+/* ---------- helpers ---------- */
+class E extends Error { constructor(s, m) { super(m); this.s = s; } }
+const bad = (m, s = 400) => { throw new E(s, m); };
+const lc = s => String(s || '').trim().toLowerCase();
+const rate = () => +db.cfg.rate || BASE.rate;
+const rid = (p, n) => { const c = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', b = crypto.randomBytes(n); let s = ''; for (let i = 0; i < n; i++) s += c[b[i] % c.length]; return p + s; };
+const sq = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const money = n => 'KES ' + Math.round(n).toLocaleString('en-US');
+const FEES = a => a <= 2000 ? 0 : a <= 5000 ? 300 : a <= 20000 ? 400 : a <= 40000 ? 500 : a <= 70000 ? 600 : a <= 100000 ? 800 : 1000;
+const tot = d => d.pay == 'Buyer' ? d.amt + d.fee : d.pay == 'Seller' ? d.amt : d.amt + d.fee / 2;
+const net = d => d.pay == 'Seller' ? d.amt - d.fee : d.pay == 'Split 50-50' ? d.amt - d.fee / 2 : d.amt;
+const toUsdt = (k, buy) => k / (buy ? rate() - BASE.spr : rate() + BASE.spr);
+const usd = n => n.toFixed(2) + ' USDT';
+const isAdmin = u => !!u && (ADMINS.includes(u.email) || db.first == u.email);
+const bal = e => db.tx.reduce((s, t) => t.e == e ? s + t.a : s, 0);
+const pub = u => ({ name: u.name, email: u.email, phone: u.phone || '', w: u.w || {}, numbers: u.numbers || [], admin: isAdmin(u), bal: bal(u.email) });
+const cfgFor = () => ({ rate: rate(), spr: BASE.spr, payName: BASE.payName, payPhone: BASE.payPhone, addr: BASE.addr });
+
+/* ---------- passwords, sessions, limits ---------- */
+function newSession(email) { const t = hex(rnd(32)); db.sessions[sh(t)] = { e: email, x: Date.now() + 30 * 864e5 }; save(); return t; }
+function authUser(t) {
+  if (!t) return null; const s = db.sessions[sh(t)]; if (!s) return null;
+  if (s.x < Date.now()) { delete db.sessions[sh(t)]; return null; }
+  return db.users[s.e] || null;
+}
+const hits = new Map();
+function lim(k, max, ms) {
+  const t = Date.now(); let h = hits.get(k);
+  if (!h || h.r < t) { h = { n: 0, r: t + ms }; hits.set(k, h); }
+  if (++h.n > max) bad('Too many attempts. Please wait a few minutes and try again.', 429);
+}
+setInterval(() => { const t = Date.now(); for (const [k, h] of hits) if (h.r < t) hits.delete(k); }, 60000);
+
+const BADPW = ['password', 'passw0rd', 'qwerty', '123456', 'abcdef', 'letmein', 'welcome', 'iloveyou', 'admin', 'xwadda', 'escrow', 'mpesa'];
+function pwProblems(p, n, e) {
+  p = String(p || ''); const l = p.toLowerCase(), loc = lc(e).split('@')[0], first = lc(n).split(/\s+/)[0], out = [];
+  if (p.length < 12) out.push('at least 12 characters'); if (!/[A-Z]/.test(p)) out.push('an uppercase letter');
+  if (!/[a-z]/.test(p)) out.push('a lowercase letter'); if (!/[0-9]/.test(p)) out.push('a number'); if (!/[^A-Za-z0-9]/.test(p)) out.push('a symbol');
+  if (BADPW.some(w => l.includes(w)) || (loc.length > 2 && l.includes(loc)) || (first.length > 2 && l.includes(first))) out.push('no common words or your name/email');
+  if (/(.)\1\1/.test(p)) out.push('no 3 repeated characters in a row');
+  return out;
+}
+const normKey = k => String(k || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+const genKey = () => rid('', 16).replace(/(.{4})(?=.)/g, '$1-');
+function sess(u) { return { token: newSession(u.email), user: pub(u), cfg: cfgFor() }; }
+
+/* ---------- deals ---------- */
+const roleOf = (d, e) => d.buyer == e ? 'buyer' : d.seller == e ? 'seller' : null;
+const mine = (d, e) => d.owner == e || d.buyer == e || d.seller == e;
+function nameOf(e) {
+  if (!e) return 'Awaiting join'; const u = db.users[e]; if (u) return u.name;
+  const p = e.split('@')[0].replace(/[._-]+/g, ' ').trim(); return p ? p.replace(/\b\w/g, c => c.toUpperCase()) : 'Awaiting join';
+}
+function dest(e) {
+  const u = db.users[e], w = u && u.w; if (!w || !w.pref) return 'none saved yet';
+  const m = s => s ? ' ••••' + String(s).slice(-4) : '';
+  return ({ mpesa: 'M-Pesa' + m(w.mp), bin: 'Binance ID' + m(w.bin), byb: 'Bybit ID' + m(w.byb), bg: 'Bitget ID' + m(w.bg), bep: 'USDT BEP20' + m(w.bep), trc: 'USDT TRC20' + m(w.trc), both: 'USDT BEP20 + TRC20' })[w.pref] || 'none saved yet';
+}
+function push(d, m) { m.id = d.mid = (d.mid || 0) + 1; m.ts = Date.now(); d.msgs.push(m); if (d.msgs.length > 1500) d.msgs.splice(0, 200); d.v++; save(); }
+const bot = (d, t, x) => push(d, Object.assign({ w: 'bot', t }, x));
+const ACTIVE = ['Pending', 'Verifying', 'Funded', 'Disputed'];
+
+function newDeal(u, b) {
+  const desc = String(b.desc || '').trim().slice(0, 200), role = b.role == 'Seller' ? 'Seller' : 'Buyer';
+  let amt = Math.round(+b.amount * (b.cur == 'USDT' ? rate() + BASE.spr : 1));
+  if (!desc) bad('Add a description of the deal.');
+  if (!(amt >= 100)) bad('The amount must be at least KES 100.'); if (amt > 5e6) bad('The amount is above the KES 5,000,000 limit. Contact support for larger deals.');
+  const pay = ['Buyer', 'Seller', 'Split 50-50'].includes(b.pay) ? b.pay : 'Buyer', cp = lc(b.cp);
+  if (cp && !/\S+@\S+\.\S+/.test(cp)) bad('The other party email looks wrong.'); if (cp == u.email) bad('You cannot invite yourself.');
+  let id, code; do id = rid('XW-', 8); while (db.deals.some(x => x.id == id));
+  do { const r = rid('', 8); code = 'XWJ-' + r.slice(0, 4) + '-' + r.slice(4); } while (db.deals.some(x => x.code == code));
+  const d = {
+    id, code, desc, role, amt, fee: FEES(amt), pay, owner: u.email, cp, at: Date.now(), v: 1, mid: 0, msgs: [], st: 'Pending', bc: 0, sc: 0, payout: 'KES',
+    buyer: role == 'Buyer' ? u.email : cp, seller: role == 'Seller' ? u.email : cp, j: { buyer: role == 'Buyer' ? 1 : 0, seller: role == 'Seller' ? 1 : 0 }, cancel: {}, pend: {}
+  };
+  db.deals.push(d); push(d, { w: 'bot', card: 'welcome' }); push(d, { w: 'bot', card: 'terms' });
+  return d;
+}
+function person(d, r) { const e = d[r]; return { name: nameOf(e), joined: !!d.j[r] && !!e }; }
+function view(d, u, since) {
+  const me = u.email, role = roleOf(d, me), adm = isAdmin(u) && !role;
+  const o = {
+    id: d.id, code: d.code, desc: d.desc, amt: d.amt, fee: d.fee, pay: d.pay, st: d.st, bc: d.bc, sc: d.sc, payout: d.payout, at: d.at, v: d.v, role, admin: adm, creator: d.role,
+    total: tot(d), net: net(d), buyer: person(d, 'buyer'), seller: person(d, 'seller'), cancel: d.cancel || {}, payoutDest: dest(d.seller), refundDest: dest(d.buyer), cfg: { rate: rate(), spr: BASE.spr }
+  };
+  if ((role == 'buyer' || adm) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
+  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
+  o.msgs = d.msgs.filter(m => !m.for || m.for == me).slice(-300);
+  return o;
+}
+function row(d, u) {
+  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; }
+  return r;
+}
+function getDeal(id, u) {
+  const d = db.deals.find(x => x.id == sq(id).replace(/^XW/, 'XW-') || x.id == String(id).toUpperCase());
+  if (!d) bad('Deal not found.', 404);
+  if (!mine(d, u.email) && !isAdmin(u)) bad('You are not part of this deal.', 403);
+  return d;
+}
+
+/* --- state changes (shared by buttons and the chat bot) --- */
+function doConfirm(d, u) {
+  const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can confirm the terms.', 403);
+  if (d.st != 'Pending') bad('This deal is already ' + d.st + '.');
+  const k = r == 'buyer' ? 'bc' : 'sc'; if (d[k]) bad('You already confirmed. Waiting for the other party.');
+  if (!d.buyer || !d.seller || !d.j.buyer || !d.j.seller) bad('The other party has not joined yet. Share the join code ' + d.code + ' with them.');
+  d[k] = 1; bot(d, (r == 'buyer' ? 'Buyer ' : 'Seller ') + nameOf(u.email) + ' confirmed the deal terms.');
+  if (d.bc && d.sc) bot(d, 'Both parties confirmed. Payment details are now unlocked. Buyer: type "fund" or tap Fund this deal and pay exactly ' + money(tot(d)) + '. Funds stay held until you confirm delivery.');
+}
+function doPaid(d, u, method) {
+  if (roleOf(d, u.email) != 'buyer') bad('Only the buyer reports payment.', 403);
+  if (d.st == 'Verifying') bad('We are already verifying your payment.'); if (d.st != 'Pending') bad('Nothing to pay. Status: ' + d.st + '.');
+  if (!(d.bc && d.sc)) bad('Both parties must confirm the terms before payment.');
+  d.st = 'Verifying'; d.method = String(method || 'M-Pesa').slice(0, 30);
+  bot(d, 'Payment reported by the buyer (' + d.method + '). We are verifying it and will confirm to both sides when funds are received.');
+}
+function doFunded(d, u) {
+  if (!isAdmin(u)) bad('Only Xwadda staff can confirm received funds.', 403);
+  if (d.st != 'Verifying' && !(d.st == 'Pending' && d.bc && d.sc)) bad('This deal is not waiting for payment confirmation.');
+  d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).');
+}
+function credit(email, a, type, ref, note) { db.tx.push({ id: rid('TX-', 8), e: email, a, type, ref, note: note || '', st: 'Done', ts: Date.now() }); }
+function doRelease(d, u, dry) {
+  const r = roleOf(d, u.email), adm = isAdmin(u) && !r;
+  if (!r && !adm) bad('Only the buyer can release funds.', 403);
+  if (d.st != 'Funded' && !(adm && d.st == 'Disputed')) bad(d.st == 'Released' ? 'Funds were already released.' : 'Nothing to release yet. Status: ' + d.st + '.');
+  if (r == 'seller') bad('Only the buyer can release funds.', 403);
+  if (dry) return;
+  d.st = 'Released'; credit(d.seller, net(d), 'release', d.id, 'Deal ' + d.id);
+  bot(d, (adm ? 'Support released the funds. ' : 'Buyer confirmed delivery. ') + money(net(d)) + (d.payout == 'USDT' ? ' (≈ ' + usd(toUsdt(net(d), 0)) + ')' : '') + ' was added to ' + nameOf(d.seller) + "'s Xwadda balance, less our fee. Payout preference: " + dest(d.seller) + '. The seller can now withdraw it from Wallet & payouts.');
+}
+function doDispute(d, u, dry) {
+  const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can raise a dispute.', 403);
+  if (d.st == 'Disputed') bad('A dispute is already open. Share your evidence here.');
+  if (d.st != 'Funded') bad('A dispute can be raised once the deal is funded. Status: ' + d.st + '.');
+  if (dry) return; d.st = 'Disputed'; bot(d, 'Dispute raised by the ' + r + '. Funds are frozen and our team will review. Share your evidence here.');
+}
+function doCancel(d, u, dry) {
+  const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can cancel.', 403);
+  if (d.st == 'Pending') { if (dry) return; d.st = 'Cancelled'; bot(d, 'Deal cancelled by the ' + r + '. No money was received, so nothing needs to be refunded.'); return; }
+  if (d.st == 'Funded') {
+    if (d.cancel[r]) bad('You already asked to cancel. Waiting for the other party to agree (they type "cancel deal").');
+    if (dry) return; d.cancel[r] = 1;
+    if (d.cancel.buyer && d.cancel.seller) { d.st = 'Refunded'; credit(d.buyer, tot(d), 'refund', d.id, 'Cancelled deal ' + d.id); bot(d, 'Both parties agreed to cancel. ' + money(tot(d)) + ' was refunded to ' + nameOf(d.buyer) + "'s Xwadda balance."); }
+    else bot(d, 'The ' + r + ' asked to cancel. The ' + (r == 'buyer' ? 'seller' : 'buyer') + ' must also type "cancel deal" to agree. If you cannot agree, raise a dispute.');
+    return;
+  }
+  if (d.st == 'Verifying') bad('Your payment is being verified, so it cannot be cancelled here. Type "human" and support will help.');
+  if (d.st == 'Disputed') bad('A dispute is open. Our team will resolve it.');
+  bad('This deal is already ' + d.st + '.');
+}
+function doRefund(d, u) {
+  if (!isAdmin(u)) bad('Only Xwadda staff can refund.', 403);
+  if (d.st != 'Funded' && d.st != 'Disputed') bad('Only funded or disputed deals can be refunded.');
+  d.st = 'Refunded'; credit(d.buyer, tot(d), 'refund', d.id, 'Refund ' + d.id);
+  bot(d, 'Support refunded ' + money(tot(d)) + ' to ' + nameOf(d.buyer) + "'s Xwadda balance.");
+}
+
+/* --- chat bot --- */
+function lev(a, b) {
+  const m = []; for (let i = 0; i <= a.length; i++) m[i] = [i]; for (let j = 0; j <= b.length; j++) m[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+  return m[a.length][b.length];
+}
+const KW = ['help', 'status', 'fund', 'fees', 'cancel', 'release', 'dispute', 'confirm', 'paid', 'refund', 'human', 'summary', 'balance', 'people', 'rates', 'code', 'menu', 'withdraw'];
+const HELP = 'I understand plain words as well as commands. Try:\n• deal id — the Deal ID and join code\n• status — where the deal stands\n• confirm — confirm the deal terms\n• fund — how and where to pay\n• paid — tell us you have paid\n• release — release funds to the seller (buyer)\n• cancel deal — cancel (or ask to cancel)\n• dispute — freeze funds and call support\n• fees, summary, people, rates, balance\n• human — talk to a person';
+const ACTS = { cancel: doCancel, release: doRelease, dispute: doDispute };
+function ask(d, u, a, text) {
+  try { ACTS[a](d, u, true); } catch (e) { return bot(d, e.message); }
+  d.pend[u.email] = { a, ts: Date.now() }; bot(d, text + '\nReply YES to confirm or NO to keep things as they are.');
+}
+function hear(d, u, raw) {
+  const me = u.email, role = roleOf(d, me);
+  let n = raw.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim(); if (!n) return;
+  const slash = raw.trim()[0] == '/', words = n.split(' '), addressed = slash || /\b(bot|xwadda|escrow)\b/.test(n);
+  if (words.length == 1 && n.length >= 4 && !KW.includes(n)) { const k = KW.find(k => lev(k, n) <= (n.length >= 6 ? 2 : 1)); if (k) { n = k; words[0] = k; } }
+  if (!(addressed || words.length <= 6)) return;       // long messages are people talking, stay quiet
+  const T = re => re.test(n), p = d.pend && d.pend[me];
+  if (p && Date.now() - p.ts < 18e4) {
+    if (/^(yes|y|yeah|yep|proceed|go ahead|do it|i confirm|confirm|yes please)$/.test(n)) { delete d.pend[me]; try { ACTS[p.a](d, u); } catch (e) { bot(d, e.message); } return; }
+    if (/^(no|n|nope|stop|abort|dont|do not|never mind|nevermind|wait|no thanks)$/.test(n)) { delete d.pend[me]; return bot(d, 'Okay, nothing was changed.'); }
+  }
+  const run = (f, ...a) => { try { f(d, u, ...a); } catch (e) { bot(d, e.message); } };
+  if (T(/\b(cancel|call off|abort deal|end deal)\b/)) return ask(d, u, 'cancel', d.st == 'Funded' ? 'Cancel deal ' + d.id + '? Because funds are held, both buyer and seller must agree, then the buyer is refunded.' : 'Cancel deal ' + d.id + '?');
+  if (T(/\brefund\b|money back|get my money/)) {
+    if (d.st == 'Funded' || d.st == 'Disputed') return bot(d, 'Funds held in escrow can be refunded when both sides agree to cancel (type "cancel deal"), or after a dispute is reviewed by support (type "dispute").');
+    return bot(d, d.st == 'Pending' ? 'No payment has been made yet, so there is nothing to refund. Type "cancel deal" to cancel.' : 'Status: ' + d.st + '. Type "human" if you need help with a refund.');
+  }
+  if (T(/^(release|release (the )?(funds?|payment|money)|release now|confirm delivery|i (have )?(received|got) (the )?(item|goods|order|product|package|it))\b/)) return ask(d, u, 'release', 'Release ' + money(net(d)) + ' to ' + nameOf(d.seller) + '? This cannot be undone.');
+  if (T(/^(dispute|raise (a )?dispute|open (a )?dispute|file (a )?dispute|report (a )?problem)\b/)) return ask(d, u, 'dispute', 'Raise a dispute on deal ' + d.id + '? Funds will be frozen until our team reviews it.');
+  if (T(/\b(i have paid|ive paid|i paid|i have sent|i sent|payment (sent|done|made)|^paid$|^done$|^sent$)\b/)) return run(doPaid, 'M-Pesa');
+  if (T(/^(confirm|i confirm|agree|i agree|accept|i accept|ok confirm|confirm deal|confirm terms)$/)) return run(doConfirm);
+  if (T(/\b(fund|pay|payment|deposit|paybill|send money|till|account details|payment details)\b/)) {
+    if (role == 'seller') return bot(d, 'Only the buyer pays. Status: ' + d.st + '. ' + (d.st == 'Funded' ? 'Funds are held, you can deliver.' : 'We will tell you here once funds are held.'));
+    if (d.st == 'Funded' || d.st == 'Released') return bot(d, 'This deal is already funded. Status: ' + d.st + '.');
+    if (d.st == 'Verifying') return bot(d, 'We are verifying the buyer\'s payment. We will confirm here as soon as it arrives.');
+    if (d.st != 'Pending') return bot(d, 'This deal is ' + d.st + ', so it cannot be funded.');
+    if (!(d.bc && d.sc)) return bot(d, 'Payment details unlock after both sides confirm. Buyer confirmed: ' + (d.bc ? 'yes' : 'no') + '. Seller confirmed: ' + (d.sc ? 'yes' : 'no') + '. Type "confirm" to confirm your side.');
+    return bot(d, 'To fund deal ' + d.id + ' pay ' + money(tot(d)) + ' (or ≈ ' + usd(toUsdt(tot(d), 1)) + '):\n• M-Pesa Send Money to ' + BASE.payPhone + ' (' + BASE.payName + '). Put ' + d.id + ' in the note.\n• USDT BEP20: ' + BASE.addr['USDT BEP20'] + '\n• USDT TRC20: ' + BASE.addr['USDT TRC20'] + '\nThese details are also on the Fund page. After paying, type "paid". I never ask for your M-Pesa PIN.');
+  }
+  if (T(/\b(deal id|id|ref|reference|deal number|escrow id|room id|deal code)\b/) && !T(/\bjoin\b/)) return bot(d, 'Deal ID: ' + d.id + '\nJoin code: ' + d.code);
+  if (T(/\b(join|invite|code|link)\b/)) return bot(d, 'Join code: ' + d.code + '\nThe other party signs in, opens "Join with a code" and enters it, or opens your Invite link. Deal ID: ' + d.id + '.');
+  if (T(/\b(status|progress|state|where are we|what next|next step)\b/)) {
+    const nx = d.st == 'Pending' ? (!(d.j.buyer && d.j.seller) ? 'Waiting for the other party to join with code ' + d.code + '.' : !(d.bc && d.sc) ? 'Waiting for confirmation (type "confirm").' : 'Buyer: type "fund" to pay.') : d.st == 'Verifying' ? 'We are verifying the payment.' : d.st == 'Funded' ? 'Seller delivers, then the buyer types "release".' : d.st == 'Disputed' ? 'Support is reviewing the dispute.' : 'This deal is closed.';
+    return bot(d, 'Deal ' + d.id + ': ' + d.st + '.\nBuyer confirmed: ' + (d.bc ? 'yes' : 'no') + '. Seller confirmed: ' + (d.sc ? 'yes' : 'no') + '.\nNext: ' + nx);
+  }
+  if (T(/\b(fees?|charges?|cost|commission)\b/)) return bot(d, 'Fee for this deal: ' + (d.fee ? money(d.fee) : 'KES 0') + ', paid by ' + d.pay + '. Tiers: up to 2,000 free; to 5,000 KES 300; to 20,000 KES 400; to 40,000 KES 500; to 70,000 KES 600; to 100,000 KES 800; above 100,000 KES 1,000.');
+  if (T(/\b(summary|details|terms|amount|how much|price|total|breakdown)\b/)) return push(d, { w: 'bot', card: 'summary' });
+  if (T(/\b(who|people|participants?|members?|buyer|seller|counterparty|other party)\b/)) return bot(d, 'Buyer: ' + nameOf(d.buyer) + (d.j.buyer ? '' : ' (not joined yet)') + '\nSeller: ' + nameOf(d.seller) + (d.j.seller ? '' : ' (not joined yet)') + '\nAdmin: Xwadda Escrow Bot');
+  if (T(/\b(rates?|usdt|exchange|convert|dollar|usd)\b/)) return bot(d, 'Rates: buy USDT at KES ' + (rate() + BASE.spr) + ', sell at KES ' + (rate() - BASE.spr) + '. This deal: ' + money(d.amt) + ' ≈ ' + usd(toUsdt(d.amt, 1)) + '; buyer pays ' + money(tot(d)) + ' ≈ ' + usd(toUsdt(tot(d), 1)) + '.');
+  if (T(/\b(balance|withdraw|wallet)\b/)) return push(d, { w: 'bot', for: me, t: 'Your available balance is ' + money(bal(me)) + '. Open Wallet & payouts to withdraw.' });
+  if (T(/\b(human|agent|support|someone|customer care|operator|talk to (a )?person)\b/)) {
+    db.tickets.push({ id: rid('TK-', 6), e: me, deal: d.id, msg: 'Asked for a human in room ' + d.id + ': ' + raw.slice(0, 300), st: 'open', ts: Date.now() });
+    return bot(d, 'Done. A human agent has been notified about deal ' + d.id + ' and will reply in this room or by email. Meanwhile you can keep chatting here.');
+  }
+  if (T(/\b(pin|password|otp|passcode)\b/)) return bot(d, 'Never share your M-Pesa PIN, password or OTP with anyone, including people who claim to be Xwadda. I will never ask for them.');
+  if (T(/^(help|menu|commands?|options|what can you do|how does this work|how to use|\?)/)) return bot(d, HELP);
+  if (T(/^(hi|hello|hey|hallo|habari|niaje|sasa|mambo|good (morning|afternoon|evening))\b/) && words.length <= 3) return bot(d, 'Hello ' + u.name.split(' ')[0] + '! Deal ' + d.id + ' is ' + d.st + '. Type "help" to see what I can do.');
+  if (T(/\b(thanks?|thank you|asante)\b/) && words.length <= 3) return bot(d, 'You are welcome. I am here if you need anything.');
+  if (words.length <= 3 || addressed) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
+}
+
+/* ---------- routes ---------- */
+const routes = [];
+const R = (m, p, f, o) => routes.push({ m, re: new RegExp('^' + p.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), f, o: o || {} });
+const numArg = (v, min, max, msg) => { v = Math.round(+v); if (!(v >= min && v <= max)) bad(msg); return v; };
+
+R('GET', '/api/health', () => ({ ok: true, t: Date.now() }), { pub: 1 });
+R('GET', '/api/config', () => ({ rate: rate(), spr: BASE.spr }), { pub: 1 });
+
+R('POST', '/api/register', c => {
+  lim('reg:' + c.ip, 10, 36e5);
+  const n = String(c.b.name || '').trim().slice(0, 80), e = lc(c.b.email), p = String(c.b.password || '');
+  if (!n || !/^\S+@\S+\.\S+$/.test(e) || e.length > 120) bad('Enter your full name and a valid email.');
+  if (db.users[e]) bad('An account with this email already exists. Please sign in.', 409);
+  const pr = pwProblems(p, n, e); if (pr.length) bad('Password needs: ' + pr.join(', ') + '.');
+  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], created: Date.now() };
+  if (!db.first) db.first = e; db.users[e] = u; save(); return Object.assign(sess(u), { recoveryKey: key });
+}, { pub: 1 });
+
+R('POST', '/api/login', c => {
+  const e = lc(c.b.email), p = String(c.b.password || ''); lim('login:' + c.ip + e, 8, 6e5);
+  const u = db.users[e], ok = chk(p, u ? u.pw : { s: '00'.repeat(16), h: '00'.repeat(32) });
+  if (!u || !ok) bad('Incorrect email or password.', 401); return sess(u);
+}, { pub: 1 });
+
+R('POST', '/api/reset', c => {
+  const e = lc(c.b.email), k = normKey(c.b.key), p = String(c.b.password || ''); lim('reset:' + c.ip + e, 5, 6e5);
+  const u = db.users[e]; if (u && !u.rk) bad('This account has no recovery key, so it cannot be reset here. Please contact support.');
+  if (!u || !chk(k, u.rk)) bad('Email or recovery key is incorrect.', 401);
+  const pr = pwProblems(p, u.name, e); if (pr.length) bad('New password needs: ' + pr.join(', ') + '.');
+  const key = genKey(); u.pw = mkHash(p); u.rk = mkHash(normKey(key));
+  for (const t in db.sessions) if (db.sessions[t].e == e) delete db.sessions[t];
+  save(); return Object.assign(sess(u), { recoveryKey: key });
+}, { pub: 1 });
+
+R('POST', '/api/logout', c => { const t = (c.tok || ''); delete db.sessions[sh(t)]; save(); return { ok: true }; });
+R('GET', '/api/me', c => ({ user: pub(c.u), cfg: cfgFor() }));
+R('POST', '/api/password', c => {
+  lim('pw:' + c.u.email, 6, 6e5); if (!chk(String(c.b.cur || ''), c.u.pw)) bad('Your current password is incorrect.', 403);
+  const pr = pwProblems(c.b.next, c.u.name, c.u.email); if (pr.length) bad('New password needs: ' + pr.join(', ') + '.');
+  c.u.pw = mkHash(String(c.b.next)); save(); return { ok: true };
+});
+R('PUT', '/api/profile', c => {
+  const n = String(c.b.name || '').trim().slice(0, 80); if (n) c.u.name = n;
+  const ph = String(c.b.phone || '').replace(/[^0-9+]/g, '').slice(0, 16); if (ph) c.u.phone = ph; save(); return pub(c.u);
+});
+R('PUT', '/api/wallet', c => {
+  const w = c.b.w || {}, o = { pref: String(w.pref || '') };
+  ['mp', 'bin', 'byb', 'bg', 'bep', 'trc'].forEach(k => o[k] = String(w[k] || '').trim().slice(0, 80));
+  if (o.bep && !/^0x[a-fA-F0-9]{40}$/.test(o.bep)) bad('BEP20 address looks wrong. It should start with 0x and be 42 characters.');
+  if (o.trc && !/^T[1-9A-HJ-NP-Za-km-z]{33}$/.test(o.trc)) bad('TRC20 address looks wrong. It should start with T and be 34 characters.');
+  if (!['mpesa', 'bin', 'byb', 'bg', 'bep', 'trc', 'both'].includes(o.pref)) bad('Choose a preferred method.');
+  const need = o.pref == 'both' ? (o.bep && o.trc) : o[({ mpesa: 'mp', bin: 'bin', byb: 'byb', bg: 'bg', bep: 'bep', trc: 'trc' })[o.pref]];
+  if (!need) bad(o.pref == 'both' ? 'Add both the BEP20 and TRC20 addresses, or choose one network.' : 'Fill in the field for your preferred method.');
+  c.u.w = o; save(); return pub(c.u);
+});
+R('PUT', '/api/numbers', c => {
+  const l = Array.isArray(c.b.list) ? c.b.list.slice(0, 10) : [], out = [];
+  for (const x of l) { const p = String(x.phone || '').replace(/[^0-9+]/g, ''); if (p.replace(/\D/g, '').length < 9 || p.length > 16) bad('One of the numbers is not valid.'); out.push({ label: String(x.label || 'My number').slice(0, 30), phone: p, def: !!x.def }); }
+  if (out.length && !out.some(x => x.def)) out[0].def = true; c.u.numbers = out; save(); return pub(c.u);
+});
+
+/* deals */
+R('GET', '/api/deals', c => ({ deals: db.deals.filter(d => mine(d, c.u.email)).map(d => row(d, c.u)).reverse(), user: pub(c.u) }));
+R('POST', '/api/deals', c => { lim('mk:' + c.u.email, 30, 36e5); return view(newDeal(c.u, c.b), c.u); });
+R('POST', '/api/join', c => {
+  lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the deal join code.');
+  const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that code. Check it and try again.', 404);
+  const me = c.u.email; if (roleOf(d, me) || d.owner == me) { return { id: d.id, already: true }; }
+  if (!ACTIVE.includes(d.st)) bad('This deal is already ' + d.st + ' and cannot be joined.');
+  const slot = d.role == 'Buyer' ? 'seller' : 'buyer';
+  if (d[slot] && d[slot] != me) bad('This deal is already assigned to another account.', 403);
+  d[slot] = me; d.j[slot] = 1; bot(d, '✅ ' + c.u.name + ' joined as the ' + (slot == 'buyer' ? 'Buyer' : 'Seller') + '. Both sides can now review the deal and type "confirm" (or press Confirm).');
+  return { id: d.id };
+});
+R('GET', '/api/deals/:id', c => {
+  const d = getDeal(c.p.id, c.u), r = roleOf(d, c.u.email);
+  if (r && !d.j[r]) { d.j[r] = 1; bot(d, '✅ ' + c.u.name + ' joined as the ' + (r == 'buyer' ? 'Buyer' : 'Seller') + '.'); }
+  if (c.q.get('v') && +c.q.get('v') == d.v) return { same: true };
+  return view(d, c.u);
+});
+const act = (name, fn) => R('POST', '/api/deals/:id/' + name, c => { const d = getDeal(c.p.id, c.u); fn(d, c.u, c.b); return view(d, c.u); });
+act('confirm', (d, u) => doConfirm(d, u));
+act('paid', (d, u, b) => doPaid(d, u, b.method));
+act('fund', (d, u) => doFunded(d, u));
+act('release', (d, u) => doRelease(d, u));
+act('dispute', (d, u) => doDispute(d, u));
+act('cancel', (d, u) => doCancel(d, u));
+act('refund', (d, u) => doRefund(d, u));
+act('payout', (d, u, b) => {
+  if (roleOf(d, u.email) != 'seller') bad('Only the seller sets the payout currency.', 403);
+  d.payout = b.cur == 'USDT' ? 'USDT' : 'KES'; bot(d, 'Seller payout set to ' + (d.payout == 'KES' ? money(net(d)) + ' via M-Pesa' : usd(toUsdt(net(d), 0)) + ' in USDT') + '.');
+});
+R('POST', '/api/deals/:id/messages', c => {
+  const d = getDeal(c.p.id, c.u), t = String(c.b.text || '').trim().slice(0, 1000); if (!t) bad('Type a message.');
+  lim('msg:' + c.u.email, 40, 6e4);
+  push(d, { w: 'user', e: c.u.email, n: c.u.name, t, adm: isAdmin(c.u) && !roleOf(d, c.u.email) });
+  hear(d, c.u, t); return view(d, c.u);
+});
+
+/* wallet */
+R('GET', '/api/wallet', c => ({ bal: bal(c.u.email), tx: db.tx.filter(t => t.e == c.u.email).slice(-100).reverse().map(t => ({ id: t.id, a: t.a, type: t.type, ref: t.ref, note: t.note, st: t.st, ts: t.ts })), user: pub(c.u) }));
+R('POST', '/api/withdraw', c => {
+  lim('wd:' + c.u.email, 10, 36e5); const a = numArg(c.b.amount, 100, 5e6, 'Minimum withdrawal is KES 100.');
+  if (a > bal(c.u.email)) bad('That is more than your available balance.');
+  const k = String(c.b.dest || ''), w = c.u.w || {}; let label = '';
+  if (k.startsWith('num:')) { const n = (c.u.numbers || [])[+k.slice(4)]; if (n) label = 'M-Pesa ' + n.phone; }
+  else { const m = { mpesa: ['M-Pesa', w.mp], bin: ['Binance ID', w.bin], byb: ['Bybit ID', w.byb], bg: ['Bitget ID', w.bg], bep: ['USDT BEP20', w.bep], trc: ['USDT TRC20', w.trc] }[k.slice(2)]; if (k.startsWith('w:') && m && m[1]) label = m[0] + ' ' + m[1]; }
+  if (!label) bad('Choose where to send the money. Add details under My numbers or Wallet & payouts.');
+  db.tx.push({ id: rid('WD-', 8), e: c.u.email, a: -a, type: 'withdraw', ref: label, note: 'Withdrawal request', st: 'Pending', ts: Date.now() }); save();
+  return { bal: bal(c.u.email) };
+});
+
+/* kiosk, scam watch, support */
+R('POST', '/api/kiosk', c => {
+  lim('ko:' + c.u.email, 20, 36e5); const b = c.b, usdt = +b.usdt, buy = b.action == 'buy';
+  if (!(usdt >= 1 && usdt <= 50000)) bad('Enter an amount between 1 and 50,000 USDT.');
+  const o = { id: rid('KO-', 7), e: c.u.email, action: buy ? 'buy' : 'sell', usdt, kes: Math.round(usdt * (buy ? rate() + BASE.spr : rate() - BASE.spr)), st: 'Pending', ts: Date.now() };
+  if (buy) { const id = String(b.uid || '').trim().slice(0, 60); if (!id) bad('Enter your exchange ID.'); o.to = String(b.platform || 'Binance ID').slice(0, 20) + ' ' + id; }
+  else { const p = String(b.phone || '').replace(/[^0-9+]/g, ''); if (p.replace(/\D/g, '').length < 9) bad('Enter the number to receive your KES.'); o.to = 'M-Pesa ' + p; o.net = String(b.net || '').slice(0, 20); }
+  db.orders.push(o); save(); return o;
+});
+R('GET', '/api/orders', c => ({ orders: db.orders.filter(o => o.e == c.u.email).slice(-30).reverse() }));
+const normV = v => { v = lc(v).replace(/[\s-]/g, ''); if (/^\+?\d{9,15}$/.test(v)) { v = v.replace('+', ''); if (v[0] == '0') v = '254' + v.slice(1); else if (/^[71]\d{8}$/.test(v)) v = '254' + v; } return v; };
+R('GET', '/api/scam/check', c => {
+  lim('sc:' + c.u.email, 60, 36e5); const v = normV(c.q.get('value')); if (v.length < 4) bad('Enter a number, email, wallet or handle to check.');
+  const r = db.reports.filter(x => x.v == v);
+  return { count: r.length, kinds: [...new Set(r.map(x => x.kind))], latest: r.slice(-3).reverse().map(x => ({ note: x.note.slice(0, 140), ts: x.ts })) };
+});
+R('POST', '/api/scam/report', c => {
+  lim('sr:' + c.u.email, 5, 864e5); const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
+  if (v.length < 4 || note.length < 10) bad('Add the number, wallet, email or handle, and a short description of what happened.');
+  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, ts: Date.now() }); save(); return { ok: true };
+});
+R('POST', '/api/support', c => {
+  lim('sp:' + c.u.email, 10, 36e5); const m = String(c.b.msg || '').trim().slice(0, 1500); if (m.length < 5) bad('Tell us a little more so we can help.');
+  db.tickets.push({ id: rid('TK-', 6), e: c.u.email, deal: String(c.b.deal || '').slice(0, 20), msg: m, st: 'open', ts: Date.now() }); save(); return { ok: true };
+});
+
+/* admin */
+R('GET', '/api/admin', c => {
+  const rel = db.deals.filter(d => d.st == 'Released');
+  return {
+    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.length },
+    rate: rate(), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
+    withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, st: t.st, ts: t.ts })),
+    orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse()
+  };
+}, { admin: 1 });
+R('POST', '/api/admin/rate', c => { const r = +c.b.rate; if (!(r > 50 && r < 500)) bad('Enter a rate between 50 and 500.'); db.cfg.rate = r; save(); return { rate: r }; }, { admin: 1 });
+R('POST', '/api/admin/withdrawals/:id', c => {
+  const t = db.tx.find(x => x.id == c.p.id && x.type == 'withdraw'); if (!t) bad('Not found.', 404); if (t.st != 'Pending') bad('Already ' + t.st + '.');
+  if (c.b.action == 'pay') t.st = 'Paid'; else { t.st = 'Rejected'; credit(t.e, -t.a, 'withdraw_refund', t.id, 'Withdrawal rejected'); } save(); return { ok: true };
+}, { admin: 1 });
+R('POST', '/api/admin/orders/:id', c => { const o = db.orders.find(x => x.id == c.p.id); if (!o) bad('Not found.', 404); o.st = c.b.action == 'done' ? 'Done' : 'Rejected'; save(); return { ok: true }; }, { admin: 1 });
+R('POST', '/api/admin/tickets/:id', c => { const t = db.tickets.find(x => x.id == c.p.id); if (!t) bad('Not found.', 404); t.st = 'closed'; save(); return { ok: true }; }, { admin: 1 });
+
+
+function call(method, path, b, tok) {
+  const url = new URL(path, 'http://x'); let m, r;
+  for (const x of routes) { if (x.m != method) continue; const g = x.re.exec(url.pathname); if (g) { r = x; m = g; break; } }
+  if (!r) bad('Not found.', 404);
+  const u = authUser(tok); if (!r.o.pub && !u) bad('Please sign in.', 401); if (r.o.admin && !isAdmin(u)) bad('Admins only.', 403);
+  const out = r.f({ u, b: b || {}, p: m.groups || {}, q: url.searchParams, ip: 'local', tok });
+  return JSON.parse(JSON.stringify(out));
+}
+return { call: call, flush: flush };
+})();
+
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
 :root{--bg:#fff;--fg:#0b1b3a;--card:#f1f5fd;--mut:#5a6b8c;--ac:#1d4ed8;--bd:#d6e0f2;--on:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px)}
@@ -91,7 +522,7 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 .kv .v{text-transform:none}.cap{text-transform:capitalize}
 </style></head><body>
 <header class="wide"><nav><span class="logo"><img src="data:image/png;base64,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" alt="XW"> Xwadda Escrow</span><span><button class="g sm" onclick="goHome()">Home</button> <button class="sm" id="navBtn" onclick="authMode('login');show('auth')">Sign in</button></span></nav></header>
-<div class="w" id="pub"><div id="srvBanner" class="banner hide"><b>Cannot reach the Xwadda server.</b> Deals, accounts and chat need the server running. If this page is on GitHub Pages, set <code>XW_API</code> at the top of index.html to your server address (see README.txt).</div>
+<div class="w" id="pub"><div id="demoBanner" class="banner hide"><b>Demo mode.</b> No Xwadda server is connected, so accounts and deals are saved only in this browser. To use it between different phones, deploy server.js and set <code>XW_API</code> (see README).</div><div id="srvBanner" class="banner hide"><b>Cannot reach the Xwadda server.</b> Deals, accounts and chat need the server running. If this page is on GitHub Pages, set <code>XW_API</code> at the top of index.html to your server address (see README.txt).</div>
 <!-- HOME -->
 <section id="home">
 <h1>Buy and sell safely.<br>Funds held until both sides are happy.</h1>
@@ -165,12 +596,16 @@ function fullPhone(cc,n){n=(n||'').replace(/[^0-9]/g,'').replace(/^0+/,'');retur
 function splitPhone(p){var m=CC.map(function(c){return c[2]}).sort(function(a,b){return b.length-a.length}).find(function(c){return (p||'').indexOf(c)==0});return m?[m,p.slice(m.length)]:['+254',p||'']}
 function copyCode(c){var ok=function(){toast('Copied: '+c)};if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(c).then(ok).catch(function(){toast(c)});else toast(c)}
 function copyLink(c){copyCode(location.href.split('#')[0]+'#join='+c)}
-function api(m,p,b){
+var MODE=null,MODEP=null;
+function detect(){if(!MODEP)MODEP=(API||location.protocol!='file:'?fetch(API+'/api/health',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){MODE=j&&j.ok?'server':'local'}):Promise.reject()).catch(function(){MODE='local'}).then(function(){var b=$('demoBanner');if(b&&MODE=='local')b.classList.remove('hide')});return MODEP}
+function localCall(m,p,b){return new Promise(function(res,rej){setTimeout(function(){try{res(XWL.call(m,p,b,TOKEN))}catch(e){var x=new Error(e&&e.s?e.message:'Something went wrong. Please try again.');x.status=(e&&e.s)||500;if(x.status==401&&TOKEN&&p!='/api/login'&&p!='/api/reset')dropSession();rej(x)}},0)})}
+function remote(m,p,b){
   return fetch(API+p,{method:m,headers:Object.assign({'Content-Type':'application/json'},TOKEN?{Authorization:'Bearer '+TOKEN}:{}),body:b?JSON.stringify(b):undefined}).then(function(r){
     return r.json().catch(function(){return {error:'The server sent an unexpected reply. Is the Xwadda server running?'}}).then(function(j){
       if(!r.ok){var e=new Error(j.error||'Request failed');e.status=r.status;if(r.status==401&&TOKEN&&p!='/api/login'&&p!='/api/reset')dropSession();throw e}return j})
   },function(){throw new Error('Cannot reach the server. Check your internet connection and try again.')})
 }
+function api(m,p,b){return detect().then(function(){return MODE=='local'?localCall(m,p,b):remote(m,p,b)})}
 function startPoll(fn,ms){stopPoll();POLL=setInterval(function(){if(!document.hidden)fn()},ms)}
 function stopPoll(){if(POLL){clearInterval(POLL);POLL=null}}
 

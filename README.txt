@@ -1,47 +1,29 @@
-XWADDA ESCROW v2  (website + server, no npm packages needed)
+XWADDA ESCROW  (works with ONLY these two files: index.html + README.txt)
 
-WHAT CHANGED
-- Joining from another device now works. Accounts, deals, chat and balances live on the server, not in the
-  browser, so a buyer on one phone and a seller on another see the same deal room. Join with the XWJ code, the
-  Deal ID, or the invite link. The code is forgiving: case and dashes do not matter.
-- Passwords are hashed on the server (scrypt). Sessions are random tokens. Login, reset, join and message
-  rate limits are enforced on the server, and only the buyer/seller of a deal (or an admin) can read it.
-- Payment details are only sent to the buyer after BOTH sides confirm. Only admins can confirm received funds.
-- Released money goes to the seller's Xwadda balance (Dashboard + Wallet & payouts). Withdrawals, USDT kiosk
-  orders, support tickets and scam reports show up in the Admin dashboard.
-- The dashboard is full width with a sticky sidebar, and the deal room has a side panel (deal info, progress,
-  actions). On phones the sidebar becomes a Menu button.
-- The bot understands plain words, typos and commands (with or without "/"): deal id, join code, status, confirm,
-  fund, paid, release, cancel deal, refund, dispute, fees, summary, people, rates, balance, human, help.
-  Release, cancel and dispute ask "Reply YES to confirm" first so nobody freezes or releases money by accident.
-  Long chat between buyer and seller is left alone (the bot only reacts to short messages or when addressed).
-- Cancel: before payment either side can cancel. After funding, both sides must say "cancel deal" and the buyer
-  is refunded. Otherwise use "dispute".
+HOW TO GET THE SITE BACK UP (GitHub Pages)
+1. Open your repo Xwadda-Escrow on GitHub.
+2. Click index.html > pencil icon (or Add file > Upload files) and replace it with the new index.html. Commit.
+3. Repo > Settings > Pages > Source: "Deploy from a branch", Branch: main, folder: / (root). Save.
+4. Wait about 1 minute, then open  https://YOUR-USERNAME.github.io/Xwadda-Escrow/
+   Press Ctrl+Shift+R (hard refresh) if you still see the old page.
 
-RUN IT
-1. Install Node 18 or newer (nodejs.org).
-2. In this folder:   ADMIN_EMAILS=you@example.com node server.js      (Windows PowerShell: $env:ADMIN_EMAILS="you@example.com"; node server.js)
-3. Open http://localhost:3000, create your account with the admin email. You now see "Admin dashboard" in the menu.
+WHY IT WENT DOWN BEFORE
+The old index.html needed a Node server (server.js) for accounts, deals and chat. GitHub Pages cannot run a server, so
+every button failed. This new index.html contains its own built-in engine and runs by itself, with no server.
 
-PUT IT ONLINE (pick one)
-A) Render.com / Railway.app (easiest)
-   - Push this folder to GitHub, create a "Web Service" from the repo. Build command: (empty). Start command: node server.js
-   - Add the environment variables from .env.example (at least ADMIN_EMAILS and TRUST_PROXY=1).
-   - IMPORTANT: attach a persistent disk/volume and set DATA_FILE to a path on it (e.g. /var/data/db.json).
-     Without one the host wipes the database on every restart.
-   - Point xwaddaescrow.co.ke at the service (custom domain) and use https.
-B) Your own VPS: install Node, run "node server.js" under pm2 or systemd, put nginx/Caddy in front for https.
+DEMO MODE (what you get on GitHub Pages)
+- Everything works: sign up, deals, join codes, chat bot, fees, wallet, USDT kiosk, scam check, admin dashboard.
+- Data is saved in THAT browser only (localStorage). A buyer on one phone will NOT see a seller on another phone.
+  To test a full deal, use one browser: create account A, create a deal, sign out, create account B, join with the code.
+- In demo mode the FIRST account created in a browser becomes admin so you can try "Confirm funds".
+- Do not use demo mode for real customer money. Anyone can clear or change their own browser data.
 
-KEEPING THE SITE ON GITHUB PAGES
-GitHub Pages cannot run the server, so deploy server.js as above (it also serves index.html itself, so you can
-simply use the server address as your site). If you still want Pages for the front end, open index.html, set
-   window.XW_API='https://your-server-address';
-near the top, and set ALLOW_ORIGIN on the server to your Pages address.
+OPTIONAL SETTINGS (top of index.html, before the first <script>)
+  window.XW_LOCAL={admins:['you@example.com'], rate:129, spread:1.5, payName:'Joshua', payPhone:'0745090132'};
+  Add this line inside the first <script> tag if you want to change the rate, spread, payment name/number or admin emails.
 
-BACKUPS AND LIMITS
-- All data is one file (DATA_FILE). Copy it regularly.
-- This is a single-server JSON store, fine for early traffic. If you grow, move to a real database.
-- M-Pesa/USDT payments are still confirmed by hand by an admin ("Confirm funds"), as before. There is no automatic
-  M-Pesa (Daraja) or blockchain check yet, and no email sending, so password reset still uses the recovery key.
-- Admin is decided by ADMIN_EMAILS on the server, so it cannot be faked from the browser any more.
-- Before holding real customer money, have the flows reviewed and add automatic payment verification.
+REAL MULTI-DEVICE MODE (later, when you are ready)
+Run the server version (server.js, package.json) on Render/Railway/a VPS, then in index.html set
+  window.XW_API='https://your-server-address';
+The page automatically uses the server when it can reach it, and falls back to demo mode when it cannot.
+Real money also needs automatic payment checks (M-Pesa Daraja / blockchain) and a security review first.
