@@ -93,7 +93,8 @@ function sess(u) { return { token: newSession(u.email), user: pub(u), cfg: cfgFo
 
 /* ---------- deals ---------- */
 const roleOf = (d, e) => d.buyer == e ? 'buyer' : d.seller == e ? 'seller' : null;
-const mine = (d, e) => d.owner == e || d.buyer == e || d.seller == e;
+const isBroker = (d, e) => (d.brokers || []).includes(e);
+const mine = (d, e) => d.owner == e || d.buyer == e || d.seller == e || isBroker(d, e);
 function nameOf(e) {
   if (!e) return 'Awaiting join'; const u = db.users[e]; if (u) return u.name;
   const p = e.split('@')[0].replace(/[._-]+/g, ' ').trim(); return p ? p.replace(/\b\w/g, c => c.toUpperCase()) : 'Awaiting join';
@@ -132,11 +133,13 @@ function view(d, u, since) {
   };
   if ((role == 'buyer' || adm) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
   if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
+  o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
+  if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
   o.msgs = d.msgs.filter(m => !m.for || m.for == me).slice(-300);
   return o;
 }
 function row(d, u) {
-  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
+  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
   if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; }
   return r;
 }
@@ -330,13 +333,28 @@ R('PUT', '/api/numbers', c => {
   if (out.length && !out.some(x => x.def)) out[0].def = true; c.u.numbers = out; save(); return pub(c.u);
 });
 
+/* public figures (no sign-in needed) */
+R('GET', '/api/public/stats', c => {
+  lim('ps:' + c.ip, 240, 6e4);
+  const h = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed');
+  return { held: h.reduce((s, d) => s + d.amt, 0), deals: h.length, t: Date.now() };
+}, { pub: 1 });
+
 /* deals */
 R('GET', '/api/deals', c => ({ deals: db.deals.filter(d => mine(d, c.u.email)).map(d => row(d, c.u)).reverse(), user: pub(c.u) }));
 R('POST', '/api/deals', c => { lim('mk:' + c.u.email, 30, 36e5); return view(newDeal(c.u, c.b), c.u); });
 R('POST', '/api/join', c => {
   lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the deal join code.');
+  if (c.b.as == 'broker') {
+    const bd = db.deals.find(x => sq(x.id) == k); if (!bd) bad('No deal found with that Deal ID. Brokers join with the Deal ID (XW-...) from the buyer or seller.', 404);
+    const bm = c.u.email; if (roleOf(bd, bm) || bd.owner == bm || isBroker(bd, bm)) return { id: bd.id, already: true };
+    if (!ACTIVE.includes(bd.st)) bad('This deal is already ' + bd.st + ' and cannot be joined.');
+    bd.brokers = bd.brokers || []; if (bd.brokers.length >= 3) bad('This deal already has the maximum number of brokers.');
+    bd.brokers.push(bm); bot(bd, '🤝 ' + c.u.name + ' joined as a Broker. Brokers can read and chat in this room, but cannot confirm, pay, release or cancel. The buyer or seller can remove a broker from the side panel.');
+    return { id: bd.id };
+  }
   const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that code. Check it and try again.', 404);
-  const me = c.u.email; if (roleOf(d, me) || d.owner == me) { return { id: d.id, already: true }; }
+  const me = c.u.email; if (roleOf(d, me) || d.owner == me || isBroker(d, me)) { return { id: d.id, already: true }; }
   if (!ACTIVE.includes(d.st)) bad('This deal is already ' + d.st + ' and cannot be joined.');
   const slot = d.role == 'Buyer' ? 'seller' : 'buyer';
   if (d[slot] && d[slot] != me) bad('This deal is already assigned to another account.', 403);
@@ -364,8 +382,17 @@ act('payout', (d, u, b) => {
 R('POST', '/api/deals/:id/messages', c => {
   const d = getDeal(c.p.id, c.u), t = String(c.b.text || '').trim().slice(0, 1000); if (!t) bad('Type a message.');
   lim('msg:' + c.u.email, 40, 6e4);
-  push(d, { w: 'user', e: c.u.email, n: c.u.name, t, adm: isAdmin(c.u) && !roleOf(d, c.u.email) });
+  push(d, { w: 'user', e: c.u.email, n: c.u.name, t, adm: isAdmin(c.u) && !roleOf(d, c.u.email), br: isBroker(d, c.u.email) && !roleOf(d, c.u.email) });
   hear(d, c.u, t); return view(d, c.u);
+});
+
+R('POST', '/api/deals/:id/brokers/remove', c => {
+  const d = getDeal(c.p.id, c.u), me = c.u.email, r = roleOf(d, me), adm = isAdmin(c.u);
+  const target = (d.brokers || []).find(e => sh('b:' + e).slice(0, 10) == String(c.b.bid || '')); if (!target) bad('Broker not found.', 404);
+  if (!(r || d.owner == me || adm || target == me)) bad('Only the buyer, the seller or the broker can do that.', 403);
+  d.brokers = d.brokers.filter(e => e != target);
+  bot(d, '🤝 ' + nameOf(target) + (target == me ? ' left the deal as a broker.' : ' was removed as a broker.'));
+  return (target == me && !r && !adm) ? { left: true } : view(d, c.u);
 });
 
 /* wallet */
@@ -556,6 +583,7 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 <div class="card stat"><b>70,000+</b>trusted since 2023</div>
 <div class="card stat"><b>127k+</b>active users</div>
 <div class="card stat"><b>24/7</b>customer support</div></div>
+<div class="card" style="margin-top:14px;text-align:center;border-color:var(--ok,#1e8e5a)"><small class="mut">HELD IN ESCROW RIGHT NOW</small><b id="hHeld" style="display:block;font-size:34px;margin:4px 0">KES -</b><span class="mut" id="hHeldSub">Updating live…</span></div>
 
 <h2>How escrow works</h2><div class="band"><h2 class="bh" style="margin:0 0 6px">Four steps from agreement to payout</h2><p style="margin:0 0 20px">Every deal follows the same order, so both sides know what comes next.</p><div class="grid"><div class="st"><small>STEP 1</small><h3 style="margin:4px 0">Agree the terms</h3><p>Buyer and seller settle the item, the price, the delivery method and how long the buyer has to inspect it. We record it.</p></div><div class="st"><small>STEP 2</small><h3 style="margin:4px 0">Buyer pays into escrow</h3><p>The buyer sends the agreed amount to the escrow account shown for that deal, by M-Pesa or cryptocurrency. We confirm it arrived.</p></div><div class="st"><small>STEP 3</small><h3 style="margin:4px 0">Seller delivers</h3><p>Once we tell the seller the funds are held, they hand over the goods or complete the work. The buyer checks it against the agreed terms.</p></div><div class="st"><small>STEP 4</small><h3 style="margin:4px 0">Release or dispute</h3><p>The buyer confirms and we pay the seller, less our fee. If something is wrong, the buyer raises a dispute and we review it before any money moves.</p></div></div></div>
 
@@ -641,7 +669,7 @@ function go(v){ROUTE=v;try{history.pushState({r:v},'',location.href.split(/[?#]/
 function toggleMenu(){document.body.classList.toggle('menu')}
 function authMode(m){['Reg:reg','Login:login','Reset:reset','Key:key'].forEach(function(x){x=x.split(':');$('st'+x[0]).classList.toggle('hide',m!=x[1])})}
 function openKiosk(){if(!S.me){toast('Please sign in to trade USDT.');authMode('login');show('auth');try{sessionStorage.setItem('xw_ph','kiosk')}catch(e){}return}go('kiosk')}
-var MENU=[['WORKSPACE MENU',[['dash','▣','Dashboard']]],['DEALS',[['create','+','Create escrow'],['join','↗','Join with a code'],['kiosk','₮','USDT kiosk']]],['ACCOUNT TOOLS',[['numbers','▦','My numbers'],['wallet','◆','Wallet & payouts'],['profile','☺','Profile']]],['DISCOVER',[['scan','⌕','Market scan'],['scam','●','Scam watch']]],['HELP',[['support','?','Support']]]];
+var MENU=[['WORKSPACE MENU',[['dash','▣','Dashboard']]],['DEALS',[['create','+','Create escrow'],['join','↗','Join with a code'],['broker','🤝','Join as broker'],['kiosk','₮','USDT kiosk']]],['ACCOUNT TOOLS',[['numbers','▦','My numbers'],['wallet','◆','Wallet & payouts'],['profile','☺','Profile']]],['DISCOVER',[['scan','⌕','Market scan'],['scam','●','Scam watch']]],['HELP',[['support','?','Support'],['official','☎','Xwadda numbers']]]];
 function buildSide(){var m=MENU.slice();if(S.me&&S.me.admin)m=m.concat([['ADMIN',[['admin','★','Admin dashboard']]]]);
   $('side').innerHTML=m.map(function(g){return '<h6>'+g[0]+'</h6>'+g[1].map(function(i){return '<a onclick="go(\''+i[0]+'\')" data-v="'+i[0]+'"><i>'+i[1]+'</i>'+i[2]+'</a>'}).join('')}).join('')+'<hr><a onclick="logout()"><i>⎋</i>Sign out</a>'}
 function route(){
@@ -696,7 +724,7 @@ var VIEWS={};
 VIEWS.dash=function(){paintDash();startPoll(function(){paintDash(1)},10000)};
 function paintDash(quiet){api('GET','/api/deals').then(function(r){if(CUR!='dash')return;S.me=r.user;var l=r.deals;
   var a=l.filter(function(d){return ACT.indexOf(d.st)>-1}).length,c=l.filter(function(d){return d.st=='Released'||d.st=='Refunded'}).length;
-  page('WORKSPACE','Welcome, '+esc(S.me.name.split(' ')[0]),'Your balance, deals and quick actions.',balCard()+'<div class="stats3"><div class="card"><small>ACTIVE · UNFINISHED</small><b>'+a+'</b></div><div class="card"><small>COMPLETED</small><b class="ok">'+c+'</b></div><div class="card"><small>ALL YOUR ROOMS</small><b>'+l.length+'</b></div></div><h2>Your deals</h2><div class="card tbl">'+dealsTable(l)+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
+  page('WORKSPACE','Welcome, '+esc(S.me.name.split(' ')[0]),'Your balance, deals and quick actions.','<div style="margin:0 0 12px"><button class="g sm" onclick="go(\'official\')">☎ Xwadda main numbers</button> <button class="g sm" onclick="go(\'broker\')">🤝 Join as broker</button></div>'+balCard()+'<div class="stats3"><div class="card"><small>ACTIVE · UNFINISHED</small><b>'+a+'</b></div><div class="card"><small>COMPLETED</small><b class="ok">'+c+'</b></div><div class="card"><small>ALL YOUR ROOMS</small><b>'+l.length+'</b></div></div><h2>Your deals</h2><div class="card tbl">'+dealsTable(l)+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
 
 // ---------- create / join ----------
 VIEWS.create=function(){page('DEALS','Create escrow','Set the terms, then share the join code with the other party.','<div class="fg2"><div class="card"><label>What is the deal for?</label><input id="dDesc" maxlength="200" placeholder="e.g. iPhone 13, 128GB"><div class="row2"><div><label>I am the</label><select id="dRole"><option>Buyer</option><option>Seller</option></select></div><div><label>Fee paid by</label><select id="dPay" onchange="fee()"><option>Buyer</option><option>Seller</option><option>Split 50-50</option></select></div></div><label>Amount</label><div class="ph"><select id="dCur" onchange="fee()" style="width:36%"><option>KES</option><option>USDT</option></select><input id="dAmt" type="number" min="0" oninput="fee()"></div><button id="mkBtn" onclick="mk()">Create deal</button></div><div class="card"><div class="ct">Live breakdown</div><p id="dFee" class="mut">Enter an amount to see the fee and totals.</p><p class="mut" style="font-size:14px">After you create the deal you get a Deal ID and a join code. The other party signs in, opens <b>Join with a code</b> and enters it, from any phone or computer.</p></div></div>')};
@@ -705,9 +733,11 @@ function fee(){var a=kesAmt(),f=FEES(a),p=$('dPay').value,o=$('dFee');if(!a){o.t
   var d={amt:a,fee:f,pay:p};o.innerHTML=($('dCur').value=='USDT'?'= '+money(a)+'<br>':'')+'Escrow fee: <b>'+(f?money(f):'KES 0 (free)')+'</b>, paid by '+p+'.<br>Buyer pays: <b>'+money(tot(d))+'</b><br>Seller receives: <b>'+money(net(d))+'</b>'}
 function mk(){var a=kesAmt();if(!$('dDesc').value.trim()||!a)return toast('Add a description and an amount.');$('mkBtn').disabled=true;
   api('POST','/api/deals',{desc:$('dDesc').value,role:$('dRole').value,amount:+$('dAmt').value,cur:$('dCur').value,pay:$('dPay').value}).then(function(d){toast('Deal '+d.id+' created. Share join code '+d.code+' with the other party.');go('room/'+d.id)}).catch(function(e){$('mkBtn').disabled=false;fail(e)})}
-VIEWS.join=function(pre){page('DEALS','Join with a code','Got a join code (XWJ-…) or a Deal ID (XW-…) from the other party? Enter it to join their escrow.','<div class="card" style="max-width:560px"><label>Join code or Deal ID</label><input id="jCode" placeholder="XWJ-XXXX-XXXX" autocomplete="off" onkeydown="if(event.key==\'Enter\')joinDeal()"><button onclick="joinDeal()">Join deal</button><p class="mut" style="font-size:14px;margin-bottom:0">You join as the opposite role to the person who created the deal. Works from any device.</p></div>');if(pre)$('jCode').value=pre.toUpperCase()};
-function joinDeal(){var c=$('jCode').value.trim();if(!c)return toast('Enter the deal join code.');
-  api('POST','/api/join',{code:c}).then(function(r){toast(r.already?'You are already part of this deal.':'You joined deal '+r.id+'.');go('room/'+r.id)}).catch(fail)}
+VIEWS.join=function(pre){page('DEALS','Join a deal','Join as the other party with a join code (XWJ-…) or a Deal ID (XW-…). Brokers join with the Deal ID.','<div class="card" style="max-width:560px"><label>I am joining as</label><select id="jAs" onchange="jAsChg()"><option value="party">The other party (buyer or seller)</option><option value="broker">A broker</option></select><label id="jLbl">Join code or Deal ID</label><input id="jCode" placeholder="XWJ-XXXX-XXXX" autocomplete="off" onkeydown="if(event.key==\'Enter\')joinDeal()"><button onclick="joinDeal()">Join deal</button><p id="jNote" class="mut" style="font-size:14px;margin-bottom:0">You join as the opposite role to the person who created the deal. Works from any device.</p></div>');if(pre)$('jCode').value=pre.toUpperCase()};
+VIEWS.broker=function(){VIEWS.join();$('jAs').value='broker';jAsChg()};
+function jAsChg(){var b=$('jAs').value=='broker';$('jLbl').textContent=b?'Deal ID':'Join code or Deal ID';$('jCode').placeholder=b?'XW-XXXXXXXX':'XWJ-XXXX-XXXX';$('jNote').textContent=b?'Brokers can read and chat in the deal room, but cannot confirm, pay, release or cancel. The buyer or seller can remove you at any time.':'You join as the opposite role to the person who created the deal. Works from any device.'}
+function joinDeal(){var c=$('jCode').value.trim(),br=$('jAs').value=='broker';if(!c)return toast(br?'Enter the Deal ID.':'Enter the deal join code.');
+  api('POST','/api/join',{code:c,as:br?'broker':''}).then(function(r){toast(r.already?'You are already part of this deal.':'You joined deal '+r.id+(br?' as a broker.':'.'));go('room/'+r.id)}).catch(fail)}
 
 // ---------- USDT kiosk ----------
 VIEWS.kiosk=function(){page('DEALS','USDT kiosk','Instant buy and sell. Rates update from the server.','<div class="fg2"><div class="card"><label>Action</label><select id="kAct" onchange="kcalc()"><option value="buy">Buy USDT (pay M-Pesa)</option><option value="sell">Sell USDT (get M-Pesa)</option></select><label>Amount (USDT)</label><input id="kAmt" type="number" value="100" oninput="kcalc()"><p id="kOut" style="font-weight:700"></p><button onclick="kiosk()">Continue</button>'+
@@ -775,13 +805,13 @@ function cardHtml(t,d){
   if(t=='welcome')return '<div class="ct">👋 Welcome to your escrow room</div>'+kv([['Deal ID','<b>'+d.id+'</b>'],['Join code','<b>'+d.code+'</b>'],['Deal',esc(d.desc)],['Buyer','🧑 '+esc(d.buyer.name)],['Seller','🧑 '+esc(d.seller.name)],['Review window','1 hour']])+((!d.buyer.joined||!d.seller.joined)?'<div class="cn">⏳ Waiting for the other party. Ask them to sign in, open <b>Join with a code</b> and enter <b>'+d.code+'</b>, or send them the invite link from the side panel.</div>':'')+'<div class="cn">Type “help” to see what I can do.</div>';
   return '<div class="ct">📋 Deal summary</div>'+kv([['Amount',money(d.amt)+' <span class="mut">≈ '+usd(toUsdt(d.amt,1))+'</span>'],['Escrow fee',(d.fee?money(d.fee):'KES 0')+' <span class="mut">paid by '+d.pay+'</span>'],['Buyer pays','<b>'+money(d.total)+'</b> <span class="mut">or '+usd(toUsdt(d.total,1))+'</span>'],['Seller receives','<b>'+money(d.net)+'</b> <span class="mut">or '+usd(toUsdt(d.net,0))+'</span>'],['Payout method',esc(d.payoutDest)],['Refund method',esc(d.refundDest)]])+'<div class="cn">🔒 Payment details stay hidden until both sides confirm.</div>'}
 function paintRoom(force){var d=S.rd,me=S.me;if(!$('rMsgs'))return;
-  $('rPeople').innerHTML=[['🤖','Xwadda Escrow Bot','Admin'],['🧑',d.buyer.name,'Buyer'],['🧑',d.seller.name,'Seller']].map(function(p){return '<span class="tag" style="padding:6px 10px">'+p[0]+' <b>'+esc(p[1])+'</b> '+p[2]+'</span>'}).join('');
+  $('rPeople').innerHTML=[['🤖','Xwadda Escrow Bot','Admin'],['🧑',d.buyer.name,'Buyer'],['🧑',d.seller.name,'Seller']].concat((d.brokers||[]).map(function(b){return ['🤝',b.name,'Broker']})).map(function(p){return '<span class="tag" style="padding:6px 10px">'+p[0]+' <b>'+esc(p[1])+'</b> '+p[2]+'</span>'}).join('');
   var m=$('rMsgs'),near=m.scrollHeight-m.scrollTop-m.clientHeight<90;
   m.innerHTML=d.msgs.map(function(x){var b=x.w=='bot',mine=x.w=='user'&&x.e==me.email,cls=b?'bot':mine?'me':'oth';
-    return '<div class="msg '+cls+'"><b class="who">'+(b?'🤖 Xwadda Escrow Bot':esc(x.n)+(x.adm?' · Support':''))+'</b>'+(x.card?cardHtml(x.card,d):'<div class="tx">'+esc(x.t)+'</div>')+'<div class="tm">'+tm(x.ts)+'</div></div>'}).join('');
+    return '<div class="msg '+cls+'"><b class="who">'+(b?'🤖 Xwadda Escrow Bot':esc(x.n)+(x.adm?' · Support':'')+(x.br?' · Broker':''))+'</b>'+(x.card?cardHtml(x.card,d):'<div class="tx">'+esc(x.t)+'</div>')+'<div class="tm">'+tm(x.ts)+'</div></div>'}).join('');
   if(near||force)m.scrollTop=m.scrollHeight;
   var done=function(c){return c?' class="d"':''},both=d.buyer.joined&&d.seller.joined,funded=['Funded','Released','Disputed'].indexOf(d.st)>-1||(d.st=='Refunded'&&d.cancel&&d.cancel.buyer);
-  var h='<div class="card"><div class="ct">Deal '+d.id+' '+tag(d.st)+'</div>'+kv([['Item',esc(d.desc)],['Amount',money(d.amt)],['Buyer pays',money(d.total)],['Seller receives',money(d.net)],['Your role','<span class="cap">'+(d.role||'Support')+'</span>']])+
+  var h='<div class="card"><div class="ct">Deal '+d.id+' '+tag(d.st)+'</div>'+kv([['Item',esc(d.desc)],['Amount',money(d.amt)],['Buyer pays',money(d.total)],['Seller receives',money(d.net)],['Your role','<span class="cap">'+(d.role||(d.broker?'broker':'Support'))+'</span>']])+
    '<div class="cn" style="margin-top:12px">Join code <b>'+d.code+'</b><div style="margin-top:6px"><button class="g sm" onclick="copyCode(\''+d.code+'\')">Copy code</button> <button class="g sm" onclick="copyLink(\''+d.code+'\')">Invite link</button></div></div>'+
    '<ul class="steps"><li'+done(both)+'>'+(both?'✓':'○')+' Both parties joined</li><li'+done(d.bc&&d.sc)+'>'+(d.bc&&d.sc?'✓':'○')+' Terms confirmed</li><li'+done(funded)+'>'+(funded?'✓':'○')+' Funds held in escrow</li><li'+done(d.st=='Released')+'>'+(d.st=='Released'?'✓':'○')+' Released to seller</li></ul></div>';
   var a='',r=d.role;
@@ -796,7 +826,9 @@ function paintRoom(force){var d=S.rd,me=S.me;if(!$('rMsgs'))return;
     if(d.st=='Verifying'||(d.st=='Pending'&&d.bc&&d.sc))a+='<button onclick="act(\'fund\')">Confirm funds received</button>';
     if(d.st=='Funded'||d.st=='Disputed')a+='<button onclick="act(\'release\')">Release to seller</button><button class="g" onclick="act(\'refund\')">Refund buyer</button>'}
   h+='<div class="card"><div class="ct">Actions</div><div class="acts">'+(a||'<span class="mut">No actions right now.</span>')+'</div></div>';
+  if((d.brokers||[]).length){h+='<div class="card"><div class="ct">Brokers</div>'+d.brokers.map(function(b){return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><span>🤝 '+esc(b.name)+'</span>'+((d.role||d.admin||b.me)?'<button class="g sm" onclick="rmBroker(\''+b.bid+'\')">'+(b.me?'Leave':'Remove')+'</button>':'')+'</div>'}).join('')+'</div>'}
   $('rSide').innerHTML=h}
+function rmBroker(bid){if(!confirm('Remove this broker from the deal?'))return;api('POST','/api/deals/'+S.rd.id+'/brokers/remove',{bid:bid}).then(function(r){if(r.left){toast('You left the deal.');go('dash')}else applyDeal(r)}).catch(fail)}
 function applyDeal(d){S.rd=d;paintRoom(false)}
 function act(a){var d=S.rd,q={release:'Release '+money(d.net)+' to the seller? This cannot be undone.',dispute:'Raise a dispute? Funds will be frozen until our team reviews it.',cancel:d.st=='Funded'?'Ask to cancel? The other party must also agree, then the buyer is refunded.':'Cancel this deal?',refund:'Refund the buyer?'}[a];
   if(q&&!confirm(q))return;api('POST','/api/deals/'+d.id+'/'+a,{}).then(function(r){applyDeal(r);toast('Done.')}).catch(fail)}
@@ -840,10 +872,18 @@ function adScam(id,a){if(a=='remove'&&!confirm('Remove this from the confirmed s
 function adScamAdd(){api('POST','/api/admin/scam',{value:$('asV').value,kind:$('asK').value,note:$('asN').value}).then(function(){toast('Added to the scam list.');paintAdmin()}).catch(fail)}
 function adDeal(id,a){if((a=='release'||a=='refund')&&!confirm((a=='release'?'Release funds to the seller':'Refund the buyer')+' for '+id+'?'))return;api('POST','/api/deals/'+id+'/'+a,{}).then(function(){paintAdmin();toast('Updated.')}).catch(fail)}
 
+// ---------- public escrow counter + official numbers ----------
+var HELD_SHOWN=0,HELD_T=null;
+function heldPoll(){api('GET','/api/public/stats').then(function(r){var el=$('hHeld');if(!el)return;var from=HELD_SHOWN,to=r.held||0,t0=Date.now();clearInterval(HELD_T);
+  HELD_T=setInterval(function(){var k=Math.min(1,(Date.now()-t0)/700),v=Math.round(from+(to-from)*k);el.textContent=money(v);if(k>=1){clearInterval(HELD_T);HELD_SHOWN=to}},40);
+  $('hHeldSub').textContent=(r.deals?r.deals+' funded deal'+(r.deals>1?'s':'')+' · ':'No funded deals right now · ')+'updates live'}).catch(function(){})}
+var XNUMS=['+254745020932','+254742845204','+254727723257','+254745322228'];
+VIEWS.official=function(){page('HELP','Xwadda main numbers','Our official lines. If a number is not on this list, it is not us.','<div class="grid">'+XNUMS.map(function(n,i){return '<div class="card"><small class="mut">XWADDA LINE '+(i+1)+'</small><b style="display:block;font-size:20px;margin:4px 0 12px">'+n.replace(/^\+254(\d{3})(\d{3})(\d{3})$/,'+254 $1 $2 $3')+'</b><button class="sm" onclick="location.href=\'tel:'+n+'\'">Call</button> <button class="g sm" onclick="copyCode(\''+n+'\')">Copy</button></div>'}).join('')+'</div><div class="card tint" style="margin-top:14px"><b>Stay safe</b><p style="margin:6px 0 0">Use these numbers to reach our team. Pay only to the details shown on your deal page or kiosk order page, and never share your M-Pesa PIN, password or OTP with anyone, including us.</p></div>')};
+
 // ---------- start ----------
 function homeRates(){api('GET','/api/config').then(function(c){S.cfg.rate=c.rate;S.cfg.spr=c.spr;$('hBuy').textContent='KES '+(c.rate+c.spr).toFixed(2);$('hSell').textContent='KES '+(c.rate-c.spr).toFixed(2)}).catch(function(){
   $('srvBanner').classList.remove('hide')})}
-window.addEventListener('load',function(){fillCc();pwCheck();homeRates();
+window.addEventListener('load',function(){fillCc();pwCheck();homeRates();heldPoll();setInterval(function(){if(!$('home').classList.contains('hide'))heldPoll()},10000);
   var jm=/[?&]join=([^&#]+)/.exec(location.search)||/#join=([^&]+)/.exec(location.hash);
   if(jm){try{ROUTE='join='+jm[1]}catch(e){}}
   try{if(location.search||location.hash)history.replaceState(null,'',location.href.split(/[?#]/)[0])}catch(e){}

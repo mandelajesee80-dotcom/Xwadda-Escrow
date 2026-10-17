@@ -106,7 +106,8 @@ function sess(u) { return { token: newSession(u.email), user: pub(u), cfg: cfgFo
 
 /* ---------- deals ---------- */
 const roleOf = (d, e) => d.buyer == e ? 'buyer' : d.seller == e ? 'seller' : null;
-const mine = (d, e) => d.owner == e || d.buyer == e || d.seller == e;
+const isBroker = (d, e) => (d.brokers || []).includes(e);
+const mine = (d, e) => d.owner == e || d.buyer == e || d.seller == e || isBroker(d, e);
 function nameOf(e) {
   if (!e) return 'Awaiting join'; const u = db.users[e]; if (u) return u.name;
   const p = e.split('@')[0].replace(/[._-]+/g, ' ').trim(); return p ? p.replace(/\b\w/g, c => c.toUpperCase()) : 'Awaiting join';
@@ -145,11 +146,13 @@ function view(d, u, since) {
   };
   if ((role == 'buyer' || adm) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
   if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
+  o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
+  if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
   o.msgs = d.msgs.filter(m => !m.for || m.for == me).slice(-300);
   return o;
 }
 function row(d, u) {
-  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
+  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
   if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; }
   return r;
 }
@@ -343,13 +346,28 @@ R('PUT', '/api/numbers', c => {
   if (out.length && !out.some(x => x.def)) out[0].def = true; c.u.numbers = out; save(); return pub(c.u);
 });
 
+/* public figures (no sign-in needed) */
+R('GET', '/api/public/stats', c => {
+  lim('ps:' + c.ip, 240, 6e4);
+  const h = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed');
+  return { held: h.reduce((s, d) => s + d.amt, 0), deals: h.length, t: Date.now() };
+}, { pub: 1 });
+
 /* deals */
 R('GET', '/api/deals', c => ({ deals: db.deals.filter(d => mine(d, c.u.email)).map(d => row(d, c.u)).reverse(), user: pub(c.u) }));
 R('POST', '/api/deals', c => { lim('mk:' + c.u.email, 30, 36e5); return view(newDeal(c.u, c.b), c.u); });
 R('POST', '/api/join', c => {
   lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the deal join code.');
+  if (c.b.as == 'broker') {
+    const bd = db.deals.find(x => sq(x.id) == k); if (!bd) bad('No deal found with that Deal ID. Brokers join with the Deal ID (XW-...) from the buyer or seller.', 404);
+    const bm = c.u.email; if (roleOf(bd, bm) || bd.owner == bm || isBroker(bd, bm)) return { id: bd.id, already: true };
+    if (!ACTIVE.includes(bd.st)) bad('This deal is already ' + bd.st + ' and cannot be joined.');
+    bd.brokers = bd.brokers || []; if (bd.brokers.length >= 3) bad('This deal already has the maximum number of brokers.');
+    bd.brokers.push(bm); bot(bd, '🤝 ' + c.u.name + ' joined as a Broker. Brokers can read and chat in this room, but cannot confirm, pay, release or cancel. The buyer or seller can remove a broker from the side panel.');
+    return { id: bd.id };
+  }
   const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that code. Check it and try again.', 404);
-  const me = c.u.email; if (roleOf(d, me) || d.owner == me) { return { id: d.id, already: true }; }
+  const me = c.u.email; if (roleOf(d, me) || d.owner == me || isBroker(d, me)) { return { id: d.id, already: true }; }
   if (!ACTIVE.includes(d.st)) bad('This deal is already ' + d.st + ' and cannot be joined.');
   const slot = d.role == 'Buyer' ? 'seller' : 'buyer';
   if (d[slot] && d[slot] != me) bad('This deal is already assigned to another account.', 403);
@@ -377,8 +395,17 @@ act('payout', (d, u, b) => {
 R('POST', '/api/deals/:id/messages', c => {
   const d = getDeal(c.p.id, c.u), t = String(c.b.text || '').trim().slice(0, 1000); if (!t) bad('Type a message.');
   lim('msg:' + c.u.email, 40, 6e4);
-  push(d, { w: 'user', e: c.u.email, n: c.u.name, t, adm: isAdmin(c.u) && !roleOf(d, c.u.email) });
+  push(d, { w: 'user', e: c.u.email, n: c.u.name, t, adm: isAdmin(c.u) && !roleOf(d, c.u.email), br: isBroker(d, c.u.email) && !roleOf(d, c.u.email) });
   hear(d, c.u, t); return view(d, c.u);
+});
+
+R('POST', '/api/deals/:id/brokers/remove', c => {
+  const d = getDeal(c.p.id, c.u), me = c.u.email, r = roleOf(d, me), adm = isAdmin(c.u);
+  const target = (d.brokers || []).find(e => sh('b:' + e).slice(0, 10) == String(c.b.bid || '')); if (!target) bad('Broker not found.', 404);
+  if (!(r || d.owner == me || adm || target == me)) bad('Only the buyer, the seller or the broker can do that.', 403);
+  d.brokers = d.brokers.filter(e => e != target);
+  bot(d, '🤝 ' + nameOf(target) + (target == me ? ' left the deal as a broker.' : ' was removed as a broker.'));
+  return (target == me && !r && !adm) ? { left: true } : view(d, c.u);
 });
 
 /* wallet */
