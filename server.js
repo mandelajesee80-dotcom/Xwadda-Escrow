@@ -24,12 +24,33 @@ const BASE = {
 let db = { users: {}, sessions: {}, deals: [], tx: [], orders: [], tickets: [], reports: [], cfg: {} };
 try { Object.assign(db, JSON.parse(fs.readFileSync(DATA, 'utf8'))); } catch (e) { }
 let saveT = null;
+let pool = null, pgBusy = false, pgDirty = false;
+async function pgFlush() {
+  if (pgBusy) { pgDirty = true; return; }
+  pgBusy = true;
+  try { do { pgDirty = false; await pool.query('insert into xw_state(id,data,updated) values(1,$1::jsonb,now()) on conflict (id) do update set data=excluded.data, updated=now()', [JSON.stringify(db)]); } while (pgDirty); }
+  catch (e) { console.error('database save failed', e.message); }
+  pgBusy = false;
+}
+async function bootDb() {
+  const cs = process.env.DATABASE_URL; if (!cs) return;
+  let Pool; try { ({ Pool } = require('pg')); } catch (e) { console.error('DATABASE_URL is set but the "pg" package is not installed. On Render set Build Command to:  npm install'); process.exit(1); }
+  pool = new Pool({ connectionString: cs, ssl: /sslmode=/.test(cs) ? undefined : { rejectUnauthorized: false }, max: 3 });
+  try {
+    await pool.query('create table if not exists xw_state(id int primary key, data jsonb not null, updated timestamptz default now())');
+    const r = await pool.query('select data from xw_state where id=1');
+    if (r.rows[0]) Object.assign(db, r.rows[0].data); else await pgFlush();
+    const t = Date.now(); for (const k in db.sessions) if (db.sessions[k].x < t) delete db.sessions[k];
+    console.log('Database connected. Accounts loaded: ' + Object.keys(db.users).length);
+  } catch (e) { console.error('Cannot reach the database, not starting (so nothing gets overwritten): ' + e.message); process.exit(1); }
+}
 function flush() {
+  if (pool) { pgFlush(); return; }
   try { fs.mkdirSync(path.dirname(DATA), { recursive: true }); const tmp = DATA + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(db)); fs.renameSync(tmp, DATA); }
   catch (e) { console.error('save failed', e.message); }
 }
 function save() { if (saveT) return; saveT = setTimeout(() => { saveT = null; flush(); }, 150); }
-['SIGINT', 'SIGTERM'].forEach(s => process.on(s, () => { flush(); process.exit(0); }));
+['SIGINT', 'SIGTERM'].forEach(s => process.on(s, async () => { if (saveT) { clearTimeout(saveT); saveT = null; } flush(); const t0 = Date.now(); while (pool && pgBusy && Date.now() - t0 < 5000) await new Promise(r => setTimeout(r, 50)); process.exit(0); }));
 (function purge() { const t = Date.now(); for (const k in db.sessions) if (db.sessions[k].x < t) delete db.sessions[k]; })();
 
 /* ---------- helpers ---------- */
@@ -266,7 +287,7 @@ const routes = [];
 const R = (m, p, f, o) => routes.push({ m, re: new RegExp('^' + p.replace(/:(\w+)/g, '(?<$1>[^/]+)') + '$'), f, o: o || {} });
 const numArg = (v, min, max, msg) => { v = Math.round(+v); if (!(v >= min && v <= max)) bad(msg); return v; };
 
-R('GET', '/api/health', () => ({ ok: true, t: Date.now() }), { pub: 1 });
+R('GET', '/api/health', () => ({ ok: true, t: Date.now(), storage: pool ? 'database' : 'file' }), { pub: 1 });
 R('GET', '/api/config', () => ({ rate: rate(), spr: BASE.spr }), { pub: 1 });
 
 R('POST', '/api/register', c => {
@@ -430,7 +451,7 @@ function body(req) {
 const CORS = { 'Access-Control-Allow-Origin': ORIGIN, 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET,POST,PUT,OPTIONS', 'Access-Control-Max-Age': '600' };
 function send(res, s, o) { res.writeHead(s, Object.assign({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }, CORS)); res.end(JSON.stringify(o)); }
 
-http.createServer(async (req, res) => {
+const srv = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     if (url.pathname == '/' || url.pathname == '/index.html') {
@@ -450,4 +471,5 @@ http.createServer(async (req, res) => {
     if (e instanceof E) return send(res, e.s, { error: e.message });
     console.error(e); send(res, 500, { error: 'Something went wrong on the server. Please try again.' });
   }
-}).listen(PORT, () => console.log('Xwadda Escrow running on http://localhost:' + PORT + (ADMINS.length ? '' : '  (no ADMIN_EMAILS set)')));
+});
+bootDb().then(() => srv.listen(PORT, () => console.log('Xwadda Escrow running on http://localhost:' + PORT + (pool ? '  [storage: database]' : '  [storage: file ' + DATA + ']') + (ADMINS.length ? '' : '  (no ADMIN_EMAILS set)'))));
