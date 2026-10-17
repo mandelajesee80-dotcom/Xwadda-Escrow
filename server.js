@@ -405,15 +405,24 @@ R('POST', '/api/kiosk', c => {
 });
 R('GET', '/api/orders', c => ({ orders: db.orders.filter(o => o.e == c.u.email).slice(-30).reverse() }));
 const normV = v => { v = lc(v).replace(/[\s-]/g, ''); if (/^\+?\d{9,15}$/.test(v)) { v = v.replace('+', ''); if (v[0] == '0') v = '254' + v.slice(1); else if (/^[71]\d{8}$/.test(v)) v = '254' + v; } return v; };
+const reportSt = x => x.st || 'pending';
+function scamLists() {
+  const cnt = {}; db.reports.filter(x => reportSt(x) != 'rejected').forEach(x => { cnt[x.v] = (cnt[x.v] || 0) + 1; });
+  const pending = db.reports.filter(x => reportSt(x) == 'pending').slice(-100).reverse().map(x => ({ id: x.id, v: x.v, kind: x.kind, note: x.note, e: x.e, ts: x.ts, n: cnt[x.v] }));
+  const seen = {}, confirmed = [];
+  db.reports.filter(x => reportSt(x) == 'confirmed').reverse().forEach(x => { if (seen[x.v]) { seen[x.v].n++; return; } seen[x.v] = { id: x.id, v: x.v, kind: x.kind, n: 1, ct: x.ct || x.ts, by: x.by || '' }; confirmed.push(seen[x.v]); });
+  return { pending, confirmed: confirmed.slice(0, 200) };
+}
 R('GET', '/api/scam/check', c => {
   lim('sc:' + c.u.email, 60, 36e5); const v = normV(c.q.get('value')); if (v.length < 4) bad('Enter a number, email, wallet or handle to check.');
-  const r = db.reports.filter(x => x.v == v);
-  return { count: r.length, kinds: [...new Set(r.map(x => x.kind))], latest: r.slice(-3).reverse().map(x => ({ note: x.note.slice(0, 140), ts: x.ts })) };
+  const all = db.reports.filter(x => x.v == v), r = all.filter(x => reportSt(x) == 'confirmed'), p = all.filter(x => reportSt(x) == 'pending');
+  return { count: r.length, pending: p.length, kinds: [...new Set(r.map(x => x.kind))], latest: r.slice(-3).reverse().map(x => ({ note: x.note.slice(0, 140), ts: x.ct || x.ts })) };
 });
 R('POST', '/api/scam/report', c => {
   lim('sr:' + c.u.email, 5, 864e5); const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
   if (v.length < 4 || note.length < 10) bad('Add the number, wallet, email or handle, and a short description of what happened.');
-  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, ts: Date.now() }); save(); return { ok: true };
+  if (db.reports.some(x => x.v == v && x.e == c.u.email && reportSt(x) != 'rejected')) bad('You already reported this one. Thank you, our team is reviewing it.');
+  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, st: 'pending', ts: Date.now() }); save(); return { ok: true };
 });
 R('POST', '/api/support', c => {
   lim('sp:' + c.u.email, 10, 36e5); const m = String(c.b.msg || '').trim().slice(0, 1500); if (m.length < 5) bad('Tell us a little more so we can help.');
@@ -424,10 +433,10 @@ R('POST', '/api/support', c => {
 R('GET', '/api/admin', c => {
   const rel = db.deals.filter(d => d.st == 'Released');
   return {
-    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.length },
+    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.filter(x => reportSt(x) == 'pending').length },
     rate: rate(), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
     withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, st: t.st, ts: t.ts })),
-    orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse()
+    orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse(), scam: scamLists()
   };
 }, { admin: 1 });
 R('POST', '/api/admin/rate', c => { const r = +c.b.rate; if (!(r > 50 && r < 500)) bad('Enter a rate between 50 and 500.'); db.cfg.rate = r; save(); return { rate: r }; }, { admin: 1 });
@@ -436,6 +445,20 @@ R('POST', '/api/admin/withdrawals/:id', c => {
   if (c.b.action == 'pay') t.st = 'Paid'; else { t.st = 'Rejected'; credit(t.e, -t.a, 'withdraw_refund', t.id, 'Withdrawal rejected'); } save(); return { ok: true };
 }, { admin: 1 });
 R('POST', '/api/admin/orders/:id', c => { const o = db.orders.find(x => x.id == c.p.id); if (!o) bad('Not found.', 404); o.st = c.b.action == 'done' ? 'Done' : 'Rejected'; save(); return { ok: true }; }, { admin: 1 });
+R('POST', '/api/admin/scam/:id', c => {
+  const x = db.reports.find(r => r.id == c.p.id); if (!x) bad('Not found.', 404); const a = c.b.action, now = Date.now();
+  if (a == 'confirm') db.reports.forEach(r => { if (r.v == x.v && reportSt(r) == 'pending') { r.st = 'confirmed'; r.ct = now; r.by = c.u.email; } });
+  else if (a == 'reject') { x.st = 'rejected'; x.ct = now; x.by = c.u.email; }
+  else if (a == 'remove') db.reports.forEach(r => { if (r.v == x.v && reportSt(r) == 'confirmed') { r.st = 'rejected'; r.ct = now; r.by = c.u.email; } });
+  else bad('Unknown action.');
+  save(); return { ok: true };
+}, { admin: 1 });
+R('POST', '/api/admin/scam', c => {
+  const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
+  if (v.length < 4 || note.length < 5) bad('Add the number, wallet, email or handle, and a short note.');
+  if (db.reports.some(x => x.v == v && reportSt(x) == 'confirmed')) bad('That one is already on the scam list.');
+  const now = Date.now(); db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, st: 'confirmed', ts: now, ct: now, by: c.u.email }); save(); return { ok: true };
+}, { admin: 1 });
 R('POST', '/api/admin/tickets/:id', c => { const t = db.tickets.find(x => x.id == c.p.id); if (!t) bad('Not found.', 404); t.st = 'closed'; save(); return { ok: true }; }, { admin: 1 });
 
 /* ---------- http ---------- */
