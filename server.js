@@ -72,6 +72,9 @@ const needsBf = d => (d.brokers || []).length > 0 && !d.bf && d.st == 'Pending';
 const toUsdt = (k, buy) => k / (buy ? rate() - BASE.spr : rate() + BASE.spr);
 const usd = n => n.toFixed(2) + ' USDT';
 const isAdmin = u => !!u && ADMINS.includes(u.email);
+const normPhone = s => { const t = String(s || '').replace(/[^0-9+]/g, ''); return /^\+[1-9]\d{7,14}$/.test(t) ? t : ''; };
+const peep = (e, role) => ({ role, name: nameOf(e), email: e, phone: (db.users[e] || {}).phone || '' });
+const peopleOf = d => [d.buyer && peep(d.buyer, 'Buyer'), d.seller && peep(d.seller, 'Seller')].concat((d.brokers || []).map(e => peep(e, 'Broker'))).filter(Boolean);
 const bal = e => db.tx.reduce((s, t) => t.e == e ? s + t.a : s, 0);
 const pub = u => ({ name: u.name, email: u.email, phone: u.phone || '', w: u.w || {}, numbers: u.numbers || [], admin: isAdmin(u), bal: bal(u.email) });
 const cfgFor = () => ({ rate: rate(), spr: BASE.spr, payName: BASE.payName, payPhone: BASE.payPhone, addr: BASE.addr });
@@ -150,7 +153,7 @@ function view(d, u, since) {
     total: tot(d), net: net(d), buyer: person(d, 'buyer'), seller: person(d, 'seller'), cancel: d.cancel || {}, payoutDest: dest(d.seller), refundDest: dest(d.buyer), cfg: { rate: rate(), spr: BASE.spr }
   };
   if ((role == 'buyer' || adm || (isBroker(d, me) && !role)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
-  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
+  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; o.people = peopleOf(d); }
   o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
   if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
   o.bf = d.bf ? { amt: d.bf.amt, by: d.bf.by } : null; o.needBf = needsBf(d); o.funder = d.funder || d.st != 'Pending' ? nameOf(funderOf(d)) : '';
@@ -162,7 +165,7 @@ function view(d, u, since) {
 }
 function row(d, u) {
   const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
-  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.people = peopleOf(d); r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
   return r;
 }
 function getDeal(id, u) {
@@ -316,7 +319,8 @@ R('POST', '/api/register', c => {
   if (!n || !/^\S+@\S+\.\S+$/.test(e) || e.length > 120) bad('Enter your full name and a valid email.');
   if (db.users[e]) bad('An account with this email already exists. Please sign in.', 409);
   const pr = pwProblems(p, n, e); if (pr.length) bad('Password needs: ' + pr.join(', ') + '.');
-  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], created: Date.now() };
+  const ph = normPhone(c.b.phone); if (!ph) bad('Enter your phone number with its country code, for example +254 712 345 678.');
+  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], phone: ph, created: Date.now() };
   db.users[e] = u; save(); return Object.assign(sess(u), { recoveryKey: key });
 }, { pub: 1 });
 
@@ -345,7 +349,7 @@ R('POST', '/api/password', c => {
 });
 R('PUT', '/api/profile', c => {
   const n = String(c.b.name || '').trim().slice(0, 80); if (n) c.u.name = n;
-  const ph = String(c.b.phone || '').replace(/[^0-9+]/g, '').slice(0, 16); if (ph) c.u.phone = ph; save(); return pub(c.u);
+  if (c.b.phone) { const ph = normPhone(c.b.phone); if (!ph) bad('Enter a valid phone number with its country code.'); c.u.phone = ph; } save(); return pub(c.u);
 });
 R('PUT', '/api/wallet', c => {
   const w = c.b.w || {}, o = { pref: String(w.pref || '') };

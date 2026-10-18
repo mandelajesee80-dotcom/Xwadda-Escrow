@@ -64,6 +64,9 @@ const needsBf = d => (d.brokers || []).length > 0 && !d.bf && d.st == 'Pending';
 const toUsdt = (k, buy) => k / (buy ? rate() - BASE.spr : rate() + BASE.spr);
 const usd = n => n.toFixed(2) + ' USDT';
 const isAdmin = u => !!u && ADMINS.includes(u.email);
+const normPhone = s => { const t = String(s || '').replace(/[^0-9+]/g, ''); return /^\+[1-9]\d{7,14}$/.test(t) ? t : ''; };
+const peep = (e, role) => ({ role, name: nameOf(e), email: e, phone: (db.users[e] || {}).phone || '' });
+const peopleOf = d => [d.buyer && peep(d.buyer, 'Buyer'), d.seller && peep(d.seller, 'Seller')].concat((d.brokers || []).map(e => peep(e, 'Broker'))).filter(Boolean);
 const bal = e => db.tx.reduce((s, t) => t.e == e ? s + t.a : s, 0);
 const pub = u => ({ name: u.name, email: u.email, phone: u.phone || '', w: u.w || {}, numbers: u.numbers || [], admin: isAdmin(u), bal: bal(u.email) });
 const cfgFor = () => ({ rate: rate(), spr: BASE.spr, payName: BASE.payName, payPhone: BASE.payPhone, addr: BASE.addr });
@@ -137,7 +140,7 @@ function view(d, u, since) {
     total: tot(d), net: net(d), buyer: person(d, 'buyer'), seller: person(d, 'seller'), cancel: d.cancel || {}, payoutDest: dest(d.seller), refundDest: dest(d.buyer), cfg: { rate: rate(), spr: BASE.spr }
   };
   if ((role == 'buyer' || adm || (isBroker(d, me) && !role)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
-  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
+  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; o.people = peopleOf(d); }
   o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
   if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
   o.bf = d.bf ? { amt: d.bf.amt, by: d.bf.by } : null; o.needBf = needsBf(d); o.funder = d.funder || d.st != 'Pending' ? nameOf(funderOf(d)) : '';
@@ -149,7 +152,7 @@ function view(d, u, since) {
 }
 function row(d, u) {
   const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
-  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.people = peopleOf(d); r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
   return r;
 }
 function getDeal(id, u) {
@@ -303,7 +306,8 @@ R('POST', '/api/register', c => {
   if (!n || !/^\S+@\S+\.\S+$/.test(e) || e.length > 120) bad('Enter your full name and a valid email.');
   if (db.users[e]) bad('An account with this email already exists. Please sign in.', 409);
   const pr = pwProblems(p, n, e); if (pr.length) bad('Password needs: ' + pr.join(', ') + '.');
-  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], created: Date.now() };
+  const ph = normPhone(c.b.phone); if (!ph) bad('Enter your phone number with its country code, for example +254 712 345 678.');
+  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], phone: ph, created: Date.now() };
   if (!db.first) db.first = e; db.users[e] = u; save(); return Object.assign(sess(u), { recoveryKey: key });
 }, { pub: 1 });
 
@@ -332,7 +336,7 @@ R('POST', '/api/password', c => {
 });
 R('PUT', '/api/profile', c => {
   const n = String(c.b.name || '').trim().slice(0, 80); if (n) c.u.name = n;
-  const ph = String(c.b.phone || '').replace(/[^0-9+]/g, '').slice(0, 16); if (ph) c.u.phone = ph; save(); return pub(c.u);
+  if (c.b.phone) { const ph = normPhone(c.b.phone); if (!ph) bad('Enter a valid phone number with its country code.'); c.u.phone = ph; } save(); return pub(c.u);
 });
 R('PUT', '/api/wallet', c => {
   const w = c.b.w || {}, o = { pref: String(w.pref || '') };
@@ -688,6 +692,7 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 <div id="stReg"><h2 style="margin-top:0">Create account</h2>
 <label>Full name</label><input id="rName" autocomplete="name">
 <label>Email</label><input id="rEmail" type="email" autocomplete="email">
+<label>Phone number (with country code)</label><div class="ph"><select class="cc" id="rCc"></select><input id="rPhone" type="tel" autocomplete="tel-national" placeholder="Phone number"></div>
 <label>Password</label><input id="rPw" type="password" autocomplete="new-password" oninput="pwCheck()">
 <label>Confirm password</label><input id="rPw2" type="password" autocomplete="new-password">
 <ul id="pwRules" class="mut" style="list-style:none;padding:0;margin:0 0 12px;font-size:13px"></ul>
@@ -713,7 +718,8 @@ var S={me:null,cfg:{rate:129,spr:1.5,payName:'',payPhone:'',addr:{}},rd:null,fd:
 try{TOKEN=localStorage.getItem('xw_token')}catch(e){}
 var $=function(i){return document.getElementById(i)};
 var ACT=['Pending','Verifying','Funded','Disputed'];
-var CC=[['KE','🇰🇪','+254'],['UG','🇺🇬','+256'],['TZ','🇹🇿','+255'],['RW','🇷🇼','+250'],['ET','🇪🇹','+251'],['NG','🇳🇬','+234'],['GH','🇬🇭','+233'],['ZA','🇿🇦','+27'],['EG','🇪🇬','+20'],['MA','🇲🇦','+212'],['ZM','🇿🇲','+260'],['ZW','🇿🇼','+263'],['CD','🇨🇩','+243'],['SS','🇸🇸','+211'],['SO','🇸🇴','+252'],['AE','🇦🇪','+971'],['SA','🇸🇦','+966'],['QA','🇶🇦','+974'],['TR','🇹🇷','+90'],['IN','🇮🇳','+91'],['PK','🇵🇰','+92'],['CN','🇨🇳','+86'],['JP','🇯🇵','+81'],['SG','🇸🇬','+65'],['MY','🇲🇾','+60'],['PH','🇵🇭','+63'],['ID','🇮🇩','+62'],['AU','🇦🇺','+61'],['GB','🇬🇧','+44'],['IE','🇮🇪','+353'],['DE','🇩🇪','+49'],['FR','🇫🇷','+33'],['IT','🇮🇹','+39'],['ES','🇪🇸','+34'],['NL','🇳🇱','+31'],['SE','🇸🇪','+46'],['CH','🇨🇭','+41'],['US','🇺🇸','+1'],['CA','🇨🇦','+1'],['BR','🇧🇷','+55'],['MX','🇲🇽','+52']];
+var CCD='KE254 UG256 TZ255 RW250 ET251 NG234 GH233 ZA27 EG20 MA212 ZM260 ZW263 CD243 SS211 SO252 AE971 SA966 QA974 TR90 IN91 PK92 CN86 JP81 SG65 MY60 PH63 ID62 AU61 GB44 IE353 DE49 FR33 IT39 ES34 NL31 SE46 CH41 US1 CA1 BR55 MX52 AD376 AF93 AL355 AM374 AO244 AR54 AT43 AZ994 BA387 BD880 BE32 BF226 BG359 BH973 BI257 BJ229 BN673 BO591 BT975 BW267 BY375 BZ501 CF236 CG242 CI225 CL56 CM237 CO57 CR506 CU53 CV238 CY357 CZ420 DJ253 DK45 DZ213 EC593 EE372 ER291 FI358 FJ679 GA241 GE995 GM220 GN224 GQ240 GR30 GT502 GW245 GY592 HK852 HN504 HR385 HT509 HU36 IL972 IQ964 IR98 IS354 JO962 KG996 KH855 KM269 KR82 KW965 KZ7 LA856 LB961 LI423 LK94 LR231 LS266 LT370 LU352 LV371 LY218 MC377 MD373 ME382 MG261 MK389 ML223 MM95 MN976 MO853 MR222 MT356 MU230 MV960 MW265 MZ258 NA264 NE227 NI505 NO47 NP977 NZ64 OM968 PA507 PE51 PG675 PL48 PS970 PT351 PY595 RO40 RS381 RU7 SC248 SD249 SI386 SK421 SL232 SN221 SR597 SV503 SY963 SZ268 TD235 TG228 TH66 TJ992 TL670 TM993 TN216 TW886 UA380 UY598 UZ998 VE58 VN84 YE967';
+var CC=CCD.split(' ').map(function(x){var iso=x.slice(0,2);return [iso,String.fromCodePoint(127397+iso.charCodeAt(0),127397+iso.charCodeAt(1)),'+'+x.slice(2)]});
 
 // ---------- helpers ----------
 function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -789,7 +795,8 @@ function reg(){var n=$('rName').value.trim(),e=$('rEmail').value.trim(),p=$('rPw
   if(!n||!/\S+@\S+\.\S+/.test(e))return toast('Enter your full name and a valid email.');
   pwCheck();if(pwRules(p,n,e).some(function(x){return !x[1]}))return toast('Password is not strong enough yet. See the checklist.');
   if(p!==$('rPw2').value)return toast('Passwords do not match.');
-  api('POST','/api/register',{name:n,email:e,password:p}).then(function(r){setSession(r);$('rPw').value=$('rPw2').value='';pwCheck();showKey(r.recoveryKey,'Account created. Welcome '+r.user.name+'!')}).catch(fail)}
+  var ph=fullPhone('rCc',$('rPhone').value);if(!ph)return toast('Enter your phone number with its country code.');
+  api('POST','/api/register',{name:n,email:e,password:p,phone:ph}).then(function(r){setSession(r);$('rPw').value=$('rPw2').value='';pwCheck();showKey(r.recoveryKey,'Account created. Welcome '+r.user.name+'!')}).catch(fail)}
 function login(){var e=$('lEmail').value.trim(),p=$('lPw').value;if(!e||!p)return toast('Enter your email and password.');
   api('POST','/api/login',{email:e,password:p}).then(function(r){setSession(r);$('lPw').value='';enter('Welcome back, '+r.user.name+'!')}).catch(fail)}
 function resetPw(){var p=$('sPw').value;if(p!==$('sPw2').value)return toast('Passwords do not match.');
@@ -909,7 +916,7 @@ function paintRoom(force){var d=S.rd,me=S.me;if(!$('rMsgs'))return;
   if(r&&d.st=='Funded')a+='<button class="g" onclick="act(\'dispute\')">⚠ Raise a dispute</button>';
   if(r&&(d.st=='Pending'||d.st=='Funded'))a+=(d.cancel&&d.cancel[r])?'<button class="g" disabled>Cancel requested…</button>':'<button class="g" onclick="act(\'cancel\')">'+(d.st=='Funded'?'Ask to cancel &amp; refund':'Cancel deal')+'</button>';
   if(r=='seller'&&d.st!='Released')a+='<div><label>Seller payout currency</label><select onchange="setPayout(this.value)"><option'+(d.payout=='KES'?' selected':'')+'>KES</option><option'+(d.payout=='USDT'?' selected':'')+'>USDT</option></select></div>';
-  if(d.admin){a+='<div class="mut" style="font-size:13px">Support view · '+esc(d.buyerEmail||'-')+' / '+esc(d.sellerEmail||'-')+'</div>';
+  if(d.admin){a+='<div class="mut" style="font-size:13px">Support view · people in this deal</div><div style="font-size:12px;margin:4px 0 8px">'+peopleHtml(d.people)+'</div>';
     if(d.st=='Verifying'||(d.st=='Pending'&&d.bc&&d.sc))a+='<button onclick="act(\'fund\')">Confirm funds received</button>';
     if(d.st=='Funded'||d.st=='Disputed')a+='<button onclick="act(\'release\')">Release to seller</button><button class="g" onclick="act(\'refund\')">Refund buyer</button>'}
   h+='<div class="card"><div class="ct">Actions</div><div class="acts">'+(a||'<span class="mut">No actions right now.</span>')+'</div></div>';
@@ -956,10 +963,11 @@ function paintAdmin(quiet){api('GET','/api/admin').then(function(r){if(CUR!='adm
   '<h2>Scam reports to review</h2><div class="card tbl">'+((r.scam&&r.scam.pending.length)?'<table><tr><th>Date</th><th>Number / handle</th><th>Type</th><th>What happened</th><th>Lost</th><th>Reporter</th><th>Reports</th><th></th></tr>'+r.scam.pending.map(function(x){return '<tr><td>'+dt(x.ts)+'</td><td><b>'+esc(x.v)+'</b></td><td>'+esc(x.kind)+'</td><td style="white-space:normal;min-width:220px">'+esc(x.note)+'</td><td>'+money(x.lost||0)+'</td><td style="font-size:13px">'+esc(x.e)+'</td><td>'+x.n+'</td><td><button class="sm" onclick="adScam(\''+x.id+'\',\'confirm\')">Confirm scam</button> <button class="g sm" onclick="adScam(\''+x.id+'\',\'reject\')">Reject</button></td></tr>'}).join('')+'</table>':'<span class="mut">Nothing waiting.</span>')+'</div>'+
   '<h2>Confirmed scam list</h2><div class="card tbl">'+((r.scam&&r.scam.confirmed.length)?'<table><tr><th>Number / handle</th><th>Type</th><th>Reports</th><th>Total lost</th><th>Confirmed</th><th>By</th><th></th></tr>'+r.scam.confirmed.map(function(x){return '<tr><td><b>'+esc(x.v)+'</b></td><td>'+esc(x.kind)+'</td><td>'+x.n+'</td><td>'+money(x.lost||0)+'</td><td>'+dt(x.ct)+'</td><td style="font-size:13px">'+esc(x.by)+'</td><td><button class="g sm" onclick="adScam(\''+x.id+'\',\'remove\')">Remove</button></td></tr>'}).join('')+'</table>':'<span class="mut">Empty.</span>')+'</div>'+
   '<div class="card" style="margin-top:12px;max-width:560px"><div class="ct">Add a confirmed scam number</div><label>Number, wallet, email or handle</label><input id="asV"><label>Type</label><select id="asK"><option>Phone number</option><option>Crypto wallet</option><option>Email</option><option>Social media handle</option><option>Website</option><option>Other</option></select><label>Note shown to people who search</label><input id="asN" maxlength="500" placeholder="Short description"><label>Total amount lost to this scammer (KES, optional)</label><input id="asL" type="number" min="0"><button onclick="adScamAdd()">Add to scam list</button></div>'+
-  '<h2>All deals</h2><div class="card tbl">'+(r.deals.length?'<table><tr><th>Deal</th><th>Item</th><th>Buyer / Seller</th><th>Amount</th><th>Status</th><th></th></tr>'+r.deals.map(function(d){var b='';
+  '<h2>All deals</h2><div class="card tbl">'+(r.deals.length?'<table><tr><th>Deal</th><th>Item</th><th>People</th><th>Amount</th><th>Status</th><th></th></tr>'+r.deals.map(function(d){var b='';
     if(d.st=='Verifying'||(d.st=='Pending'&&d.bc&&d.sc))b+=' <button class="sm" onclick="adDeal(\''+d.id+'\',\'fund\')">Confirm funds</button>';
     if(d.st=='Funded'||d.st=='Disputed')b+=' <button class="sm" onclick="adDeal(\''+d.id+'\',\'release\')">Release</button> <button class="g sm" onclick="adDeal(\''+d.id+'\',\'refund\')">Refund</button>';if(d.tpid)b+=' <button class="sm" onclick="adTop(\''+d.id+'\',\''+d.tpid+'\')">Confirm top-up</button>';
-    return '<tr><td><b>'+d.id+'</b><div class="mut" style="font-size:12px">'+dt(d.at)+'</div></td><td style="white-space:normal;min-width:140px">'+esc(d.desc)+'</td><td style="font-size:13px">'+esc(d.buyerEmail||'-')+'<br>'+esc(d.sellerEmail||'-')+'</td><td>'+money(d.amt)+'</td><td>'+tag(d.st)+'</td><td><button class="g sm" onclick="go(\'room/'+d.id+'\')">Room</button>'+b+'</td></tr>'}).join('')+'</table>':'<span class="mut">No deals.</span>')+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
+    return '<tr><td><b>'+d.id+'</b><div class="mut" style="font-size:12px">'+dt(d.at)+'</div></td><td style="white-space:normal;min-width:140px">'+esc(d.desc)+'</td><td style="font-size:12px;white-space:normal;min-width:240px">'+peopleHtml(d.people)+'</td><td>'+money(d.amt)+'</td><td>'+tag(d.st)+'</td><td><button class="g sm" onclick="go(\'room/'+d.id+'\')">Room</button>'+b+'</td></tr>'}).join('')+'</table>':'<span class="mut">No deals.</span>')+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
+function peopleHtml(l){return (l||[]).length?l.map(function(p){return '<div style="margin-bottom:6px"><b>'+p.role+'</b>: '+esc(p.name)+'<br>'+esc(p.email)+'<br>'+(p.phone?'<a href="tel:'+esc(p.phone)+'">'+esc(p.phone)+'</a>':'<span class="mut">no phone on file</span>')+'</div>'}).join(''):'<span class="mut">-</span>'}
 function adRate(){api('POST','/api/admin/rate',{rate:+$('adRate').value}).then(function(r){S.cfg.rate=r.rate;toast('Rate saved.')}).catch(fail)}
 function adDo(k,id,a){api('POST','/api/admin/'+k+'/'+id,{action:a}).then(function(){paintAdmin();toast('Updated.')}).catch(fail)}
 function adScam(id,a){if(a=='remove'&&!confirm('Remove this from the confirmed scam list?'))return;api('POST','/api/admin/scam/'+id,{action:a}).then(function(){paintAdmin();toast(a=='confirm'?'Confirmed. It now shows as a scam in searches.':'Updated.')}).catch(fail)}
