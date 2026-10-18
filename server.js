@@ -13,7 +13,7 @@ const ORIGIN = process.env.ALLOW_ORIGIN || '*';
 const TRUST = process.env.TRUST_PROXY == '1';
 const BASE = {
   rate: +process.env.RATE || 129, spr: +process.env.SPREAD || 1.5,
-  payName: process.env.PAY_NAME || 'Joshua', payPhone: process.env.PAY_PHONE || '0745090132',
+  payName: process.env.PAY_NAME || 'Joshua', payPhone: process.env.PAY_PHONE || '0745020932',
   addr: {
     'USDT BEP20': process.env.ADDR_BEP20 || '0xc08aad31945e614cab90012b9da4dfa53a3ddc2c',
     'USDT TRC20': process.env.ADDR_TRC20 || 'TPwAc1xBpMssGYh2ioX7x8QL9PXZStPNLP'

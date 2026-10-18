@@ -13,7 +13,7 @@ var XWL=(function(){
 var KEY='xw_local_db_v1';
 var CFGL=window.XW_LOCAL||{};
 var ADMINS=(CFGL.admins||[]).map(function(s){return String(s).trim().toLowerCase()}).filter(Boolean);
-var BASE={rate:+CFGL.rate||129,spr:+CFGL.spread||1.5,payName:CFGL.payName||'Joshua',payPhone:CFGL.payPhone||'0745090132',
+var BASE={rate:+CFGL.rate||129,spr:+CFGL.spread||1.5,payName:CFGL.payName||'Joshua',payPhone:CFGL.payPhone||'0745020932',
  addr:{'USDT BEP20':CFGL.bep20||'0xc08aad31945e614cab90012b9da4dfa53a3ddc2c','USDT TRC20':CFGL.trc20||'TPwAc1xBpMssGYh2ioX7x8QL9PXZStPNLP'}};
 var db={users:{},sessions:{},deals:[],tx:[],orders:[],tickets:[],reports:[],cfg:{},first:''};
 try{Object.assign(db,JSON.parse(localStorage.getItem(KEY)||'{}'))}catch(e){}
