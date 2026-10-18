@@ -62,8 +62,13 @@ const rid = (p, n) => { const c = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', b = crypto.
 const sq = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const money = n => 'KES ' + Math.round(n).toLocaleString('en-US');
 const FEES = a => a <= 2000 ? 0 : a <= 5000 ? 300 : a <= 20000 ? 400 : a <= 40000 ? 500 : a <= 70000 ? 600 : a <= 100000 ? 800 : 1000;
-const tot = d => (d.pay == 'Buyer' ? d.amt + d.fee : d.pay == 'Seller' ? d.amt : d.amt + d.fee / 2) + (d.bfee || 0);
-const net = d => d.pay == 'Seller' ? d.amt - d.fee : d.pay == 'Split 50-50' ? d.amt - d.fee / 2 : d.amt;
+const feeSh = d => d.pay == 'Buyer' ? [d.fee, 0] : d.pay == 'Seller' ? [0, d.fee] : [d.fee / 2, d.fee / 2];
+const bfSh = d => { const a = d.bf ? d.bf.amt : 0; return !d.bf || d.bf.by == 'Buyer' ? [a, 0] : d.bf.by == 'Seller' ? [0, a] : [Math.ceil(a / 2), a - Math.ceil(a / 2)]; };
+const tot = d => d.amt + feeSh(d)[0] + bfSh(d)[0];
+const net = d => d.amt - feeSh(d)[1] - bfSh(d)[1];
+const funderOf = d => d.funder || d.buyer;
+const topSum = d => (d.topups || []).filter(t => t.st == 'Confirmed').reduce((s, t) => s + t.a, 0);
+const needsBf = d => (d.brokers || []).length > 0 && !d.bf && d.st == 'Pending';
 const toUsdt = (k, buy) => k / (buy ? rate() - BASE.spr : rate() + BASE.spr);
 const usd = n => n.toFixed(2) + ' USDT';
 const isAdmin = u => !!u && ADMINS.includes(u.email);
@@ -141,19 +146,23 @@ function person(d, r) { const e = d[r]; return { name: nameOf(e), joined: !!d.j[
 function view(d, u, since) {
   const me = u.email, role = roleOf(d, me), adm = isAdmin(u) && !role;
   const o = {
-    id: d.id, code: d.id, desc: d.desc, amt: d.amt, fee: d.fee, pay: d.pay, st: d.st, bc: d.bc, sc: d.sc, payout: d.payout, at: d.at, v: d.v, role, admin: adm, creator: d.role,
+    id: d.id, code: d.code, desc: d.desc, amt: d.amt, fee: d.fee, pay: d.pay, st: d.st, bc: d.bc, sc: d.sc, payout: d.payout, at: d.at, v: d.v, role, admin: adm, creator: d.role,
     total: tot(d), net: net(d), buyer: person(d, 'buyer'), seller: person(d, 'seller'), cancel: d.cancel || {}, payoutDest: dest(d.seller), refundDest: dest(d.buyer), cfg: { rate: rate(), spr: BASE.spr }
   };
-  if (((role == 'buyer' || adm || isBroker(d, me)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) || (isBroker(d, me) && d.st == 'Funded')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
+  if ((role == 'buyer' || adm || (isBroker(d, me) && !role)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
   if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
-  o.broker = isBroker(d, me); o.bfee = d.bfee || 0; o.bset = !!d.bset; o.bamt = d.bamt || 0; o.top = d.top || 0; o.myFunded = d.fundedBy == me; o.tops = (d.tops || []).map(t => ({ id: t.id, amt: t.amt, st: t.st, by: nameOf(t.by) })); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
+  o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
   if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
+  o.bf = d.bf ? { amt: d.bf.amt, by: d.bf.by } : null; o.needBf = needsBf(d); o.funder = d.funder || d.st != 'Pending' ? nameOf(funderOf(d)) : '';
+  o.canRelease = d.st == 'Funded' && me == funderOf(d); o.topSum = topSum(d); o.held = d.amt + topSum(d);
+  o.topups = (d.topups || []).slice(-10).map(t => ({ id: t.id, a: t.a, st: t.st, by: nameOf(t.e), m: t.m, ts: t.ts }));
+  if (o.broker && !role && !adm && d.st == 'Funded') o.topInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
   o.msgs = d.msgs.filter(m => !m.for || m.for == me).slice(-300);
   return o;
 }
 function row(d, u) {
-  const r = { id: d.id, code: d.id, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
-  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; }
+  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
   return r;
 }
 function getDeal(id, u) {
@@ -167,33 +176,40 @@ function getDeal(id, u) {
 function doConfirm(d, u) {
   const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can confirm the terms.', 403);
   if (d.st != 'Pending') bad('This deal is already ' + d.st + '.');
-  const k = r == 'buyer' ? 'bc' : 'sc'; if (r == 'buyer' && (d.brokers || []).length && !d.bset) bad('A broker is in this deal. The broker must list their fee or amount before you can confirm as buyer.'); if (d[k]) bad('You already confirmed. Waiting for the other party.');
-  if (!d.buyer || !d.seller || !d.j.buyer || !d.j.seller) bad('The other party has not joined yet. Share the join code ' + d.code + ' with them.');
+  if (needsBf(d)) bad('A broker is in this deal. Waiting for the broker to list their fee before the buyer and seller can confirm.');
+  const k = r == 'buyer' ? 'bc' : 'sc'; if (d[k]) bad('You already confirmed. Waiting for the other party.');
+  if (!d.buyer || !d.seller || !d.j.buyer || !d.j.seller) bad('The other party has not joined yet. Share the Deal ID ' + d.id + ' with them.');
   d[k] = 1; bot(d, (r == 'buyer' ? 'Buyer ' : 'Seller ') + nameOf(u.email) + ' confirmed the deal terms.');
-  if (d.bc && d.sc) bot(d, 'Both parties confirmed. Payment details are now unlocked. Buyer: type "fund" or tap Fund this deal and pay exactly ' + money(tot(d)) + '. Funds stay held until you confirm delivery.');
+  if (d.bc && d.sc) bot(d, 'Both parties confirmed. Payment details are now unlocked. Buyer' + ((d.brokers || []).length ? ' (or the broker)' : '') + ': type "fund" or tap Fund this deal and pay exactly ' + money(tot(d)) + '. ' + ((d.brokers || []).length ? 'Whoever funds the deal is the one who can release the funds.' : 'Funds stay held until you confirm delivery.'));
 }
 function doPaid(d, u, method) {
-  if (roleOf(d, u.email) != 'buyer' && !isBroker(d, u.email)) bad('Only the buyer or a broker in this deal can report payment.', 403);
+  const brk = isBroker(d, u.email) && !roleOf(d, u.email);
+  if (roleOf(d, u.email) != 'buyer' && !brk) bad('Only the buyer or the broker reports payment.', 403);
   if (d.st == 'Verifying') bad('We are already verifying your payment.'); if (d.st != 'Pending') bad('Nothing to pay. Status: ' + d.st + '.');
   if (!(d.bc && d.sc)) bad('Both parties must confirm the terms before payment.');
-  d.st = 'Verifying'; d.method = String(method || 'M-Pesa').slice(0, 30); d.fundedBy = u.email;
-  bot(d, 'Payment reported by ' + (roleOf(d, u.email) ? 'the buyer' : 'broker ' + nameOf(u.email)) + ' (' + d.method + '). We are verifying it and will confirm to both sides when funds are received.');
+  d.st = 'Verifying'; d.method = String(method || 'M-Pesa').slice(0, 30); d.funder = u.email;
+  bot(d, 'Payment reported by the ' + (brk ? 'broker' : 'buyer') + ' (' + d.method + '). We are verifying it and will confirm to both sides when funds are received.');
 }
 function doFunded(d, u) {
   if (!isAdmin(u)) bad('Only Xwadda staff can confirm received funds.', 403);
   if (d.st != 'Verifying' && !(d.st == 'Pending' && d.bc && d.sc)) bad('This deal is not waiting for payment confirmation.');
-  d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).');
+  d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. ' + (funderOf(d) == d.buyer ? 'Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).' : nameOf(funderOf(d)) + ' (the broker who funded this deal) releases the funds once delivery is confirmed. Buyer or seller: type "dispute" if something is wrong.'));
 }
-function topRefund(d) { (d.tops || []).filter(t => t.st == 'Done').forEach(t => credit(t.by, t.amt, 'refund', d.id, 'Top-up refund ' + d.id)); d.top = 0; }
 function credit(email, a, type, ref, note) { db.tx.push({ id: rid('TX-', 8), e: email, a, type, ref, note: note || '', st: 'Done', ts: Date.now() }); }
 function doRelease(d, u, dry) {
-  const r = roleOf(d, u.email), adm = isAdmin(u) && !r;
-  const br = isBroker(d, u.email) && !r; if (!r && !adm && !br) bad('Only the buyer can release funds.', 403); if (br && d.fundedBy != u.email) bad('A broker can only release funds that they funded themselves.', 403);
+  const r = roleOf(d, u.email), adm = isAdmin(u) && !r, isF = u.email == funderOf(d);
+  if (!isF && !adm) bad(isBroker(d, u.email) ? 'Only the person who funded this deal can release the funds. A broker can release only if the broker funded it.' : r == 'buyer' ? 'The broker funded this deal, so the broker releases the funds. If something is wrong, raise a dispute.' : 'Only the buyer can release funds.', 403);
   if (d.st != 'Funded' && !(adm && d.st == 'Disputed')) bad(d.st == 'Released' ? 'Funds were already released.' : 'Nothing to release yet. Status: ' + d.st + '.');
-  if (r == 'seller') bad('Only the buyer can release funds.', 403);
   if (dry) return;
-  d.st = 'Released'; credit(d.seller, net(d) + (d.top || 0), 'release', d.id, 'Deal ' + d.id); if (d.bfee && d.bfeeBy) credit(d.bfeeBy, d.bfee, 'release', d.id, 'Broker fee ' + d.id);
-  bot(d, (adm ? 'Support released the funds. ' : 'Buyer confirmed delivery. ') + money(net(d) + (d.top || 0)) + (d.payout == 'USDT' ? ' (≈ ' + usd(toUsdt(net(d), 0)) + ')' : '') + ' was added to ' + nameOf(d.seller) + "'s Xwadda balance, less our fee. Payout preference: " + dest(d.seller) + '. The seller can now withdraw it from Wallet & payouts.');
+  const sp = net(d) + topSum(d);
+  d.st = 'Released'; credit(d.seller, sp, 'release', d.id, 'Deal ' + d.id);
+  if (d.bf && d.bf.amt > 0 && (d.brokers || [])[0]) credit(d.brokers[0], d.bf.amt, 'broker_fee', d.id, 'Broker fee ' + d.id);
+  bot(d, (adm ? 'Support released the funds. ' : isF && r != 'buyer' ? 'The broker who funded this deal confirmed delivery. ' : 'Buyer confirmed delivery. ') + money(sp) + (d.payout == 'USDT' ? ' (≈ ' + usd(toUsdt(sp, 0)) + ')' : '') + ' was added to ' + nameOf(d.seller) + "'s Xwadda balance, less our fee. Payout preference: " + dest(d.seller) + '. The seller can now withdraw it from Wallet & payouts.' + (d.bf && d.bf.amt > 0 ? ' The broker fee of ' + money(d.bf.amt) + ' was added to ' + nameOf(d.brokers[0]) + "'s balance." : ''));
+}
+function refundAll(d, note) {
+  const f = funderOf(d); credit(f, tot(d), 'refund', d.id, note);
+  (d.topups || []).filter(t => t.st == 'Confirmed').forEach(t => credit(t.e, t.a, 'refund', d.id, note + ' (top-up)'));
+  return money(tot(d)) + ' was refunded to ' + nameOf(f) + "'s Xwadda balance" + (topSum(d) ? ', and the top-ups went back to the people who added them' : '') + '.';
 }
 function doDispute(d, u, dry) {
   const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can raise a dispute.', 403);
@@ -207,7 +223,7 @@ function doCancel(d, u, dry) {
   if (d.st == 'Funded') {
     if (d.cancel[r]) bad('You already asked to cancel. Waiting for the other party to agree (they type "cancel deal").');
     if (dry) return; d.cancel[r] = 1;
-    if (d.cancel.buyer && d.cancel.seller) { d.st = 'Refunded'; credit(d.fundedBy || d.buyer, tot(d), 'refund', d.id, 'Cancelled deal ' + d.id); topRefund(d); bot(d, 'Both parties agreed to cancel. ' + money(tot(d)) + ' was refunded to ' + nameOf(d.buyer) + "'s Xwadda balance."); }
+    if (d.cancel.buyer && d.cancel.seller) { d.st = 'Refunded'; bot(d, 'Both parties agreed to cancel. ' + refundAll(d, 'Cancelled deal ' + d.id)); }
     else bot(d, 'The ' + r + ' asked to cancel. The ' + (r == 'buyer' ? 'seller' : 'buyer') + ' must also type "cancel deal" to agree. If you cannot agree, raise a dispute.');
     return;
   }
@@ -218,8 +234,8 @@ function doCancel(d, u, dry) {
 function doRefund(d, u) {
   if (!isAdmin(u)) bad('Only Xwadda staff can refund.', 403);
   if (d.st != 'Funded' && d.st != 'Disputed') bad('Only funded or disputed deals can be refunded.');
-  d.st = 'Refunded'; credit(d.fundedBy || d.buyer, tot(d), 'refund', d.id, 'Refund ' + d.id); topRefund(d);
-  bot(d, 'Support refunded ' + money(tot(d)) + ' to ' + nameOf(d.buyer) + "'s Xwadda balance.");
+  d.st = 'Refunded';
+  bot(d, 'Support refunded: ' + refundAll(d, 'Refund ' + d.id));
 }
 
 /* --- chat bot --- */
@@ -229,7 +245,7 @@ function lev(a, b) {
   return m[a.length][b.length];
 }
 const KW = ['help', 'status', 'fund', 'fees', 'cancel', 'release', 'dispute', 'confirm', 'paid', 'refund', 'human', 'summary', 'balance', 'people', 'rates', 'code', 'menu', 'withdraw'];
-const HELP = 'I understand plain words as well as commands. Try:\n• deal id — the Deal ID and join code\n• status — where the deal stands\n• confirm — confirm the deal terms\n• fund — how and where to pay\n• paid — tell us you have paid\n• release — release funds to the seller (buyer)\n• cancel deal — cancel (or ask to cancel)\n• dispute — freeze funds and call support\n• fees, summary, people, rates, balance\n• human — talk to a person';
+const HELP = 'I understand plain words as well as commands. Try:\n• deal id — the Deal ID to share\n• status — where the deal stands\n• confirm — confirm the deal terms\n• fund — how and where to pay\n• paid — tell us you have paid\n• release — release funds to the seller (buyer)\n• cancel deal — cancel (or ask to cancel)\n• dispute — freeze funds and call support\n• fees, summary, people, rates, balance\n• human — talk to a person';
 const ACTS = { cancel: doCancel, release: doRelease, dispute: doDispute };
 function ask(d, u, a, text) {
   try { ACTS[a](d, u, true); } catch (e) { return bot(d, e.message); }
@@ -264,10 +280,10 @@ function hear(d, u, raw) {
     if (!(d.bc && d.sc)) return bot(d, 'Payment details unlock after both sides confirm. Buyer confirmed: ' + (d.bc ? 'yes' : 'no') + '. Seller confirmed: ' + (d.sc ? 'yes' : 'no') + '. Type "confirm" to confirm your side.');
     return bot(d, 'To fund deal ' + d.id + ' pay ' + money(tot(d)) + ' (or ≈ ' + usd(toUsdt(tot(d), 1)) + '):\n• M-Pesa Send Money to ' + BASE.payPhone + ' (' + BASE.payName + '). Put ' + d.id + ' in the note.\n• USDT BEP20: ' + BASE.addr['USDT BEP20'] + '\n• USDT TRC20: ' + BASE.addr['USDT TRC20'] + '\nThese details are also on the Fund page. After paying, type "paid". I never ask for your M-Pesa PIN.');
   }
-  if (T(/\b(deal id|id|ref|reference|deal number|escrow id|room id|deal code)\b/) && !T(/\bjoin\b/)) return bot(d, 'Deal ID: ' + d.id + '\nJoin code: ' + d.code);
-  if (T(/\b(join|invite|code|link)\b/)) return bot(d, 'Join code: ' + d.code + '\nThe other party signs in, opens "Join with a code" and enters it, or opens your Invite link. Deal ID: ' + d.id + '.');
+  if (T(/\b(deal id|id|ref|reference|deal number|escrow id|room id|deal code)\b/) && !T(/\bjoin\b/)) return bot(d, 'Deal ID: ' + d.id + '\nShare this Deal ID with the other party. They enter it under "Join a deal".');
+  if (T(/\b(join|invite|code|link)\b/)) return bot(d, 'Deal ID: ' + d.id + '\nThe other party signs in, opens "Join a deal" and enters this Deal ID, or opens your Invite link.');
   if (T(/\b(status|progress|state|where are we|what next|next step)\b/)) {
-    const nx = d.st == 'Pending' ? (!(d.j.buyer && d.j.seller) ? 'Waiting for the other party to join with code ' + d.code + '.' : !(d.bc && d.sc) ? 'Waiting for confirmation (type "confirm").' : 'Buyer: type "fund" to pay.') : d.st == 'Verifying' ? 'We are verifying the payment.' : d.st == 'Funded' ? 'Seller delivers, then the buyer types "release".' : d.st == 'Disputed' ? 'Support is reviewing the dispute.' : 'This deal is closed.';
+    const nx = d.st == 'Pending' ? (!(d.j.buyer && d.j.seller) ? 'Waiting for the other party to join with Deal ID ' + d.id + '.' : !(d.bc && d.sc) ? 'Waiting for confirmation (type "confirm").' : 'Buyer: type "fund" to pay.') : d.st == 'Verifying' ? 'We are verifying the payment.' : d.st == 'Funded' ? 'Seller delivers, then the buyer types "release".' : d.st == 'Disputed' ? 'Support is reviewing the dispute.' : 'This deal is closed.';
     return bot(d, 'Deal ' + d.id + ': ' + d.st + '.\nBuyer confirmed: ' + (d.bc ? 'yes' : 'no') + '. Seller confirmed: ' + (d.sc ? 'yes' : 'no') + '.\nNext: ' + nx);
   }
   if (T(/\b(fees?|charges?|cost|commission)\b/)) return bot(d, 'Fee for this deal: ' + (d.fee ? money(d.fee) : 'KES 0') + ', paid by ' + d.pay + '. Tiers: up to 2,000 free; to 5,000 KES 300; to 20,000 KES 400; to 40,000 KES 500; to 70,000 KES 600; to 100,000 KES 800; above 100,000 KES 1,000.');
@@ -351,23 +367,27 @@ R('PUT', '/api/numbers', c => {
 R('GET', '/api/public/stats', c => {
   lim('ps:' + c.ip, 240, 6e4);
   const h = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed');
-  return { held: h.reduce((s, d) => s + d.amt + (d.top || 0), 0), rate: rate(), deals: h.length, t: Date.now() };
+  const held = h.reduce((s, d) => s + d.amt + topSum(d), 0);
+  const sec = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed' || d.st == 'Released'), secured = sec.reduce((s, d) => s + d.amt + topSum(d), 0);
+  const cr = db.reports.filter(x => reportSt(x) == 'confirmed'), lost = cr.reduce((s, x) => s + (x.lost || 0), 0), u2 = k => Math.round(k / rate() * 100) / 100;
+  return { held, usdt: u2(held), rate: rate(), deals: h.length, secured, securedUsdt: u2(secured), securedDeals: sec.length, lost, lostUsdt: u2(lost), scamReports: cr.length, t: Date.now() };
 }, { pub: 1 });
 
 /* deals */
 R('GET', '/api/deals', c => ({ deals: db.deals.filter(d => mine(d, c.u.email)).map(d => row(d, c.u)).reverse(), user: pub(c.u) }));
 R('POST', '/api/deals', c => { lim('mk:' + c.u.email, 30, 36e5); return view(newDeal(c.u, c.b), c.u); });
 R('POST', '/api/join', c => {
-  lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the deal join code.');
+  lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the Deal ID.');
   if (c.b.as == 'broker') {
     const bd = db.deals.find(x => sq(x.id) == k); if (!bd) bad('No deal found with that Deal ID. Brokers join with the Deal ID (XW-...) from the buyer or seller.', 404);
     const bm = c.u.email; if (roleOf(bd, bm) || bd.owner == bm || isBroker(bd, bm)) return { id: bd.id, already: true };
-    if (!ACTIVE.includes(bd.st)) bad('This deal is already ' + bd.st + ' and cannot be joined.');
-    bd.brokers = bd.brokers || []; if (bd.brokers.length >= 3) bad('This deal already has the maximum number of brokers.');
-    bd.brokers.push(bm); bot(bd, '🤝 ' + c.u.name + ' joined as a Broker. Brokers can read and chat in this room, but cannot confirm, pay, release or cancel. The buyer or seller can remove a broker from the side panel.');
+    if (bd.st != 'Pending') bad('Brokers can only join before the deal is funded, so their fee can be listed first.');
+    bd.brokers = bd.brokers || []; if (bd.brokers.length >= 1) bad('This deal already has a broker.');
+    bd.brokers.push(bm); const rs = bd.bc || bd.sc; bd.bc = 0; bd.sc = 0;
+    bot(bd, '🤝 ' + c.u.name + ' joined as the Broker. The broker must list their fee before the buyer and seller confirm' + (rs ? ' (confirmations were reset)' : '') + '. Brokers can chat, add a top-up after funding, and release only if they funded the deal.');
     return { id: bd.id };
   }
-  const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that code. Check it and try again.', 404);
+  const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that ID. Check it and try again.', 404);
   const me = c.u.email; if (roleOf(d, me) || d.owner == me || isBroker(d, me)) { return { id: d.id, already: true }; }
   if (!ACTIVE.includes(d.st)) bad('This deal is already ' + d.st + ' and cannot be joined.');
   const slot = d.role == 'Buyer' ? 'seller' : 'buyer';
@@ -388,27 +408,6 @@ act('fund', (d, u) => doFunded(d, u));
 act('release', (d, u) => doRelease(d, u));
 act('dispute', (d, u) => doDispute(d, u));
 act('cancel', (d, u) => doCancel(d, u));
-act('brokerfee', (d, u, b) => {
-  if (!isBroker(d, u.email)) bad('Only a broker in this deal can list a broker fee.', 403);
-  if (d.st != 'Pending' || d.bc) bad('The broker fee can only be listed before the buyer confirms and funding starts.');
-  const f = Math.round(+b.fee), a = Math.round(+b.amt) || 0; if (!(f >= 0) || f > 1e6) bad('Enter a broker fee of KES 0 or more.');
-  d.bfee = f; d.bamt = a; d.bfeeBy = u.email; d.bset = 1;
-  bot(d, '🤝 Broker ' + nameOf(u.email) + ' listed their fee: ' + money(f) + (a ? ' and will fund up to ' + money(a) : '') + '. New buyer total: ' + money(tot(d)) + '. The buyer can now confirm as buyer.');
-});
-act('topup', (d, u, b) => {
-  if (!isBroker(d, u.email)) bad('Only a broker can top up the held funds.', 403);
-  if (d.st != 'Funded') bad('Top-ups are for funds already held in escrow. Status: ' + d.st + '.');
-  const a = Math.round(+b.amount); if (!(a >= 100) || a > 5e6) bad('A top-up must be at least KES 100.');
-  d.tops = d.tops || []; if (d.tops.filter(t => t.st == 'Verifying').length >= 3) bad('You already have pending top-ups. Wait for support to confirm them.');
-  const t = { id: rid('TP-', 6), by: u.email, amt: a, st: 'Verifying', ts: Date.now() }; d.tops.push(t);
-  bot(d, '➕ Broker ' + nameOf(u.email) + ' reported a top-up of ' + money(a) + ' (' + t.id + '). We are verifying it and will add it to the held funds.');
-});
-act('topupok', (d, u, b) => {
-  if (!isAdmin(u)) bad('Only Xwadda staff can confirm top-ups.', 403);
-  const t = (d.tops || []).find(x => x.id == b.tid && x.st == 'Verifying'); if (!t) bad('Top-up not found.', 404);
-  t.st = 'Done'; d.top = (d.top || 0) + t.amt;
-  bot(d, '✅ Top-up ' + t.id + ' of ' + money(t.amt) + ' confirmed. Funds now held for this deal: ' + money(d.amt + d.top) + '.');
-});
 act('refund', (d, u) => doRefund(d, u));
 act('payout', (d, u, b) => {
   if (roleOf(d, u.email) != 'seller') bad('Only the seller sets the payout currency.', 403);
@@ -425,9 +424,40 @@ R('POST', '/api/deals/:id/brokers/remove', c => {
   const d = getDeal(c.p.id, c.u), me = c.u.email, r = roleOf(d, me), adm = isAdmin(c.u);
   const target = (d.brokers || []).find(e => sh('b:' + e).slice(0, 10) == String(c.b.bid || '')); if (!target) bad('Broker not found.', 404);
   if (!(r || d.owner == me || adm || target == me)) bad('Only the buyer, the seller or the broker can do that.', 403);
-  d.brokers = d.brokers.filter(e => e != target); if (d.bfeeBy == target && d.st == 'Pending') { d.bfee = 0; d.bamt = 0; d.bset = 0; d.bfeeBy = ''; d.bc = 0; }
+  if (d.st != 'Pending' && !adm) bad('A broker cannot leave or be removed after the deal is funded.');
+  d.brokers = d.brokers.filter(e => e != target);
+  if (!d.brokers.length) { d.bf = null; d.bc = 0; d.sc = 0; }
   bot(d, '🤝 ' + nameOf(target) + (target == me ? ' left the deal as a broker.' : ' was removed as a broker.'));
   return (target == me && !r && !adm) ? { left: true } : view(d, c.u);
+});
+
+R('POST', '/api/deals/:id/broker-fee', c => {
+  const d = getDeal(c.p.id, c.u), me = c.u.email;
+  if (!isBroker(d, me) || roleOf(d, me)) bad('Only the broker can list the broker fee.', 403);
+  if (d.st != 'Pending') bad('The broker fee can only be listed before the deal is funded.');
+  const a = Math.round(+c.b.amount); if (!(a >= 0) || a > d.amt) bad('Enter a fee from KES 0 up to the deal amount.');
+  const by = ['Buyer', 'Seller', 'Split 50-50'].includes(c.b.by) ? c.b.by : 'Buyer';
+  if (net(Object.assign({}, d, { bf: { amt: a, by } })) < 0) bad('That fee is too high: the seller would receive less than nothing.');
+  const rs = d.bc || d.sc; d.bf = { amt: a, by }; d.bc = 0; d.sc = 0;
+  bot(d, '🤝 Broker ' + c.u.name + ' listed a broker fee of ' + money(a) + ' (paid by ' + by + '). Buyer pays ' + money(tot(d)) + '. Seller receives ' + money(net(d)) + '. Buyer and seller can now confirm the terms' + (rs ? ' again' : '') + '.');
+  return view(d, c.u);
+});
+R('POST', '/api/deals/:id/topup', c => {
+  const d = getDeal(c.p.id, c.u), me = c.u.email; lim('tu:' + me, 10, 36e5);
+  if (!isBroker(d, me) || roleOf(d, me)) bad('Only the broker can top up this deal.', 403);
+  if (d.st != 'Funded') bad('A top-up can be added once the deal is funded and before it is released. Status: ' + d.st + '.');
+  const a = numArg(c.b.amount, 100, 5e6, 'Enter a top-up of at least KES 100.');
+  d.topups = d.topups || []; if (d.topups.some(t => t.st == 'Verifying')) bad('A top-up is already being verified. Please wait until we confirm it.');
+  d.topups.push({ id: rid('TU-', 6), e: me, a, m: String(c.b.method || 'M-Pesa').slice(0, 30), st: 'Verifying', ts: Date.now() });
+  bot(d, '➕ Broker ' + c.u.name + ' reported a top-up of ' + money(a) + ' (' + String(c.b.method || 'M-Pesa').slice(0, 30) + '). We are verifying it and will confirm here when it arrives.');
+  return view(d, c.u);
+});
+R('POST', '/api/deals/:id/topup/:tid', c => {
+  const d = getDeal(c.p.id, c.u); if (!isAdmin(c.u)) bad('Only Xwadda staff can confirm top-ups.', 403);
+  const t = (d.topups || []).find(x => x.id == c.p.tid); if (!t) bad('Top-up not found.', 404); if (t.st != 'Verifying') bad('That top-up is already ' + t.st + '.');
+  if (c.b.action == 'reject') { t.st = 'Rejected'; bot(d, 'The top-up of ' + money(t.a) + ' was not confirmed. Contact support if you believe this is a mistake.'); }
+  else { if (d.st != 'Funded') bad('The deal is no longer funded.'); t.st = 'Confirmed'; bot(d, '✅ Top-up of ' + money(t.a) + ' confirmed. ' + money(d.amt + topSum(d)) + ' is now held for this deal.'); }
+  return view(d, c.u);
 });
 
 /* wallet */
@@ -457,21 +487,23 @@ const normV = v => { v = lc(v).replace(/[\s-]/g, ''); if (/^\+?\d{9,15}$/.test(v
 const reportSt = x => x.st || 'pending';
 function scamLists() {
   const cnt = {}; db.reports.filter(x => reportSt(x) != 'rejected').forEach(x => { cnt[x.v] = (cnt[x.v] || 0) + 1; });
-  const pending = db.reports.filter(x => reportSt(x) == 'pending').slice(-100).reverse().map(x => ({ id: x.id, v: x.v, kind: x.kind, note: x.note, e: x.e, ts: x.ts, n: cnt[x.v] }));
+  const pending = db.reports.filter(x => reportSt(x) == 'pending').slice(-100).reverse().map(x => ({ id: x.id, v: x.v, kind: x.kind, note: x.note, lost: x.lost || 0, e: x.e, ts: x.ts, n: cnt[x.v] }));
   const seen = {}, confirmed = [];
-  db.reports.filter(x => reportSt(x) == 'confirmed').reverse().forEach(x => { if (seen[x.v]) { seen[x.v].n++; return; } seen[x.v] = { id: x.id, v: x.v, kind: x.kind, n: 1, ct: x.ct || x.ts, by: x.by || '' }; confirmed.push(seen[x.v]); });
+  db.reports.filter(x => reportSt(x) == 'confirmed').reverse().forEach(x => { if (seen[x.v]) { seen[x.v].n++; seen[x.v].lost += x.lost || 0; return; } seen[x.v] = { id: x.id, v: x.v, kind: x.kind, n: 1, lost: x.lost || 0, ct: x.ct || x.ts, by: x.by || '' }; confirmed.push(seen[x.v]); });
   return { pending, confirmed: confirmed.slice(0, 200) };
 }
 R('GET', '/api/scam/check', c => {
   lim('sc:' + c.u.email, 60, 36e5); const v = normV(c.q.get('value')); if (v.length < 4) bad('Enter a number, email, wallet or handle to check.');
   const all = db.reports.filter(x => x.v == v), r = all.filter(x => reportSt(x) == 'confirmed'), p = all.filter(x => reportSt(x) == 'pending');
-  return { count: r.length, pending: p.length, kinds: [...new Set(r.map(x => x.kind))], latest: r.slice(-3).reverse().map(x => ({ note: x.note.slice(0, 140), ts: x.ct || x.ts })) };
+  const total = r.reduce((s, x) => s + (x.lost || 0), 0);
+  return { count: r.length, pending: p.length, kinds: [...new Set(r.map(x => x.kind))], total, totalUsdt: Math.round(total / rate() * 100) / 100, reports: r.slice(-20).reverse().map(x => ({ note: x.note.slice(0, 300), lost: x.lost || 0, kind: x.kind, ts: x.ct || x.ts })) };
 });
 R('POST', '/api/scam/report', c => {
   lim('sr:' + c.u.email, 5, 864e5); const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
   if (v.length < 4 || note.length < 10) bad('Add the number, wallet, email or handle, and a short description of what happened.');
+  const lost = (c.b.lost === '' || c.b.lost == null) ? 0 : numArg(c.b.lost, 0, 1e9, 'Enter the amount lost as a number in KES, or leave it empty.');
   if (db.reports.some(x => x.v == v && x.e == c.u.email && reportSt(x) != 'rejected')) bad('You already reported this one. Thank you, our team is reviewing it.');
-  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, st: 'pending', ts: Date.now() }); save(); return { ok: true };
+  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, lost, st: 'pending', ts: Date.now() }); save(); return { ok: true };
 });
 R('POST', '/api/support', c => {
   lim('sp:' + c.u.email, 10, 36e5); const m = String(c.b.msg || '').trim().slice(0, 1500); if (m.length < 5) bad('Tell us a little more so we can help.');
@@ -482,8 +514,8 @@ R('POST', '/api/support', c => {
 R('GET', '/api/admin', c => {
   const rel = db.deals.filter(d => d.st == 'Released');
   return {
-    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, heldKes: db.deals.filter(d => d.st == 'Funded').reduce((s, d) => s + d.amt + (d.top || 0), 0), reports: db.reports.filter(x => reportSt(x) == 'pending').length },
-    rate: rate(), users: Object.values(db.users).sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 30).map(u => ({ name: u.name, email: u.email, phone: u.phone || '', ts: u.created || 0 })), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
+    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.filter(x => reportSt(x) == 'pending').length },
+    rate: rate(), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
     withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, st: t.st, ts: t.ts })),
     orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse(), scam: scamLists()
   };
@@ -506,7 +538,8 @@ R('POST', '/api/admin/scam', c => {
   const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
   if (v.length < 4 || note.length < 5) bad('Add the number, wallet, email or handle, and a short note.');
   if (db.reports.some(x => x.v == v && reportSt(x) == 'confirmed')) bad('That one is already on the scam list.');
-  const now = Date.now(); db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, st: 'confirmed', ts: now, ct: now, by: c.u.email }); save(); return { ok: true };
+  const lost = (c.b.lost === '' || c.b.lost == null) ? 0 : numArg(c.b.lost, 0, 1e9, 'Enter the amount lost as a number in KES, or leave it empty.');
+  const now = Date.now(); db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, lost, st: 'confirmed', ts: now, ct: now, by: c.u.email }); save(); return { ok: true };
 }, { admin: 1 });
 R('POST', '/api/admin/tickets/:id', c => { const t = db.tickets.find(x => x.id == c.p.id); if (!t) bad('Not found.', 404); t.st = 'closed'; save(); return { ok: true }; }, { admin: 1 });
 
