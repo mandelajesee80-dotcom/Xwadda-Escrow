@@ -145,7 +145,7 @@ function newDeal(u, b) {
   db.deals.push(d); push(d, { w: 'bot', card: 'welcome' }); push(d, { w: 'bot', card: 'terms' });
   return d;
 }
-function person(d, r) { const e = d[r]; return { name: nameOf(e), joined: !!d.j[r] && !!e }; }
+function person(d, r) { const e = d[r]; return { name: nameOf(e), joined: !!d.j[r] && !!e, phone: e ? ((db.users[e] || {}).phone || '') : '' }; }
 function view(d, u, since) {
   const me = u.email, role = roleOf(d, me), adm = isAdmin(u) && !role;
   const o = {
@@ -165,7 +165,7 @@ function view(d, u, since) {
 }
 function row(d, u) {
   const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
-  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.people = peopleOf(d); r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.buyerPhone = d.buyer ? ((db.users[d.buyer] || {}).phone || '') : ''; r.sellerPhone = d.seller ? ((db.users[d.seller] || {}).phone || '') : ''; r.people = peopleOf(d); r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
   return r;
 }
 function getDeal(id, u) {
