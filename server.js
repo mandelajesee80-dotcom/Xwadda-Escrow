@@ -72,6 +72,9 @@ const needsBf = d => (d.brokers || []).length > 0 && !d.bf && d.st == 'Pending';
 const toUsdt = (k, buy) => k / (buy ? rate() - BASE.spr : rate() + BASE.spr);
 const usd = n => n.toFixed(2) + ' USDT';
 const isAdmin = u => !!u && ADMINS.includes(u.email);
+const normPhone = s => { const t = String(s || '').replace(/[^0-9+]/g, ''); return /^\+[1-9]\d{7,14}$/.test(t) ? t : ''; };
+const peep = (e, role) => ({ role, name: nameOf(e), email: e, phone: (db.users[e] || {}).phone || '' });
+const peopleOf = d => [d.buyer && peep(d.buyer, 'Buyer'), d.seller && peep(d.seller, 'Seller')].concat((d.brokers || []).map(e => peep(e, 'Broker'))).filter(Boolean);
 const bal = e => db.tx.reduce((s, t) => t.e == e ? s + t.a : s, 0);
 const pub = u => ({ name: u.name, email: u.email, phone: u.phone || '', w: u.w || {}, numbers: u.numbers || [], admin: isAdmin(u), bal: bal(u.email) });
 const cfgFor = () => ({ rate: rate(), spr: BASE.spr, payName: BASE.payName, payPhone: BASE.payPhone, addr: BASE.addr });
@@ -150,7 +153,7 @@ function view(d, u, since) {
     total: tot(d), net: net(d), buyer: person(d, 'buyer'), seller: person(d, 'seller'), cancel: d.cancel || {}, payoutDest: dest(d.seller), refundDest: dest(d.buyer), cfg: { rate: rate(), spr: BASE.spr }
   };
   if ((role == 'buyer' || adm || (isBroker(d, me) && !role)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
-  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
+  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; o.people = peopleOf(d); }
   o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
   if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
   o.bf = d.bf ? { amt: d.bf.amt, by: d.bf.by } : null; o.needBf = needsBf(d); o.funder = d.funder || d.st != 'Pending' ? nameOf(funderOf(d)) : '';
@@ -162,7 +165,7 @@ function view(d, u, since) {
 }
 function row(d, u) {
   const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
-  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.people = peopleOf(d); r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
   return r;
 }
 function getDeal(id, u) {
@@ -194,6 +197,8 @@ function doFunded(d, u) {
   if (!isAdmin(u)) bad('Only Xwadda staff can confirm received funds.', 403);
   if (d.st != 'Verifying' && !(d.st == 'Pending' && d.bc && d.sc)) bad('This deal is not waiting for payment confirmation.');
   d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. ' + (funderOf(d) == d.buyer ? 'Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).' : nameOf(funderOf(d)) + ' (the broker who funded this deal) releases the funds once delivery is confirmed. Buyer or seller: type "dispute" if something is wrong.'));
+
+  bot(d, '🔐 Selling an online writing, academic or freelancing account?\n\nSeller: send the account logins here in this chat room (username or email, password, and any recovery email, phone number or 2FA details). Please keep everything inside this room, never on WhatsApp, calls or email, so the delivery is recorded and Xwadda support can review it if there is a dispute.\n\nBuyer: log in, check that the account works and matches what was agreed, then follow the release steps above. If anything is wrong, type \"dispute\" and the funds stay frozen while support reviews the record here.\n\nNever share your M-Pesa PIN or OTP with anyone.');
 }
 function credit(email, a, type, ref, note) { db.tx.push({ id: rid('TX-', 8), e: email, a, type, ref, note: note || '', st: 'Done', ts: Date.now() }); }
 function doRelease(d, u, dry) {
@@ -299,7 +304,7 @@ function hear(d, u, raw) {
   if (T(/^(help|menu|commands?|options|what can you do|how does this work|how to use|\?)/)) return bot(d, HELP);
   if (T(/^(hi|hello|hey|hallo|habari|niaje|sasa|mambo|good (morning|afternoon|evening))\b/) && words.length <= 3) return bot(d, 'Hello ' + u.name.split(' ')[0] + '! Deal ' + d.id + ' is ' + d.st + '. Type "help" to see what I can do.');
   if (T(/\b(thanks?|thank you|asante)\b/) && words.length <= 3) return bot(d, 'You are welcome. I am here if you need anything.');
-  if (words.length <= 3 || addressed) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
+  if ((words.length <= 3 || addressed) && !(isAdmin(u) && !role)) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
 }
 
 /* ---------- routes ---------- */
@@ -316,7 +321,8 @@ R('POST', '/api/register', c => {
   if (!n || !/^\S+@\S+\.\S+$/.test(e) || e.length > 120) bad('Enter your full name and a valid email.');
   if (db.users[e]) bad('An account with this email already exists. Please sign in.', 409);
   const pr = pwProblems(p, n, e); if (pr.length) bad('Password needs: ' + pr.join(', ') + '.');
-  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], created: Date.now() };
+  const ph = normPhone(c.b.phone); if (!ph) bad('Enter your phone number with its country code, for example +254 712 345 678.');
+  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], phone: ph, created: Date.now() };
   db.users[e] = u; save(); return Object.assign(sess(u), { recoveryKey: key });
 }, { pub: 1 });
 
@@ -345,7 +351,7 @@ R('POST', '/api/password', c => {
 });
 R('PUT', '/api/profile', c => {
   const n = String(c.b.name || '').trim().slice(0, 80); if (n) c.u.name = n;
-  const ph = String(c.b.phone || '').replace(/[^0-9+]/g, '').slice(0, 16); if (ph) c.u.phone = ph; save(); return pub(c.u);
+  if (c.b.phone) { const ph = normPhone(c.b.phone); if (!ph) bad('Enter a valid phone number with its country code.'); c.u.phone = ph; } save(); return pub(c.u);
 });
 R('PUT', '/api/wallet', c => {
   const w = c.b.w || {}, o = { pref: String(w.pref || '') };
@@ -388,8 +394,7 @@ R('POST', '/api/join', c => {
     return { id: bd.id };
   }
   const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that ID. Check it and try again.', 404);
-  const me = c.u.email, r0 = roleOf(d, me);
-  if (r0 || d.owner == me || isBroker(d, me)) { if (r0 && d.j && !d.j[r0]) { d.j[r0] = 1; bot(d, '✅ ' + c.u.name + ' joined as the ' + (r0 == 'buyer' ? 'Buyer' : 'Seller') + '.'); } return { id: d.id, already: true }; }
+  const me = c.u.email; if (roleOf(d, me) || d.owner == me || isBroker(d, me)) { return { id: d.id, already: true }; }
   if (!ACTIVE.includes(d.st)) bad('This deal is already ' + d.st + ' and cannot be joined.');
   const slot = d.role == 'Buyer' ? 'seller' : 'buyer';
   if (d[slot] && d[slot] != me) bad('This deal is already assigned to another account.', 403);
@@ -464,17 +469,13 @@ R('POST', '/api/deals/:id/topup/:tid', c => {
 /* wallet */
 R('GET', '/api/wallet', c => ({ bal: bal(c.u.email), tx: db.tx.filter(t => t.e == c.u.email).slice(-100).reverse().map(t => ({ id: t.id, a: t.a, type: t.type, ref: t.ref, note: t.note, st: t.st, ts: t.ts })), user: pub(c.u) }));
 R('POST', '/api/withdraw', c => {
-  lim('wd:' + c.u.email, 10, 36e5); const usdtMode = c.b.cur == 'USDT'; let a, note = 'Withdrawal request';
-  if (usdtMode) { const u = +c.b.amount; if (!(u >= 1)) bad('Minimum withdrawal is 1 USDT.'); a = Math.round(u * (rate() - BASE.spr)); note = 'Withdrawal of ' + u.toFixed(2) + ' USDT at KES ' + (rate() - BASE.spr); }
-  else a = numArg(c.b.amount, 100, 5e6, 'Minimum withdrawal is KES 100.');
-  if (a < 100) bad('That is below the minimum withdrawal of KES 100.');
+  lim('wd:' + c.u.email, 10, 36e5); const a = numArg(c.b.amount, 100, 5e6, 'Minimum withdrawal is KES 100.');
   if (a > bal(c.u.email)) bad('That is more than your available balance.');
   const k = String(c.b.dest || ''), w = c.u.w || {}; let label = '';
-  if (usdtMode && (k.startsWith('num:') || k == 'w:mpesa')) bad('Choose a crypto destination (Binance, Bybit, Bitget, BEP20 or TRC20) for a USDT withdrawal.');
   if (k.startsWith('num:')) { const n = (c.u.numbers || [])[+k.slice(4)]; if (n) label = 'M-Pesa ' + n.phone; }
   else { const m = { mpesa: ['M-Pesa', w.mp], bin: ['Binance ID', w.bin], byb: ['Bybit ID', w.byb], bg: ['Bitget ID', w.bg], bep: ['USDT BEP20', w.bep], trc: ['USDT TRC20', w.trc] }[k.slice(2)]; if (k.startsWith('w:') && m && m[1]) label = m[0] + ' ' + m[1]; }
   if (!label) bad('Choose where to send the money. Add details under My numbers or Wallet & payouts.');
-  db.tx.push({ id: rid('WD-', 8), e: c.u.email, a: -a, type: 'withdraw', ref: label, note, st: 'Pending', ts: Date.now() }); save();
+  db.tx.push({ id: rid('WD-', 8), e: c.u.email, a: -a, type: 'withdraw', ref: label, note: 'Withdrawal request', st: 'Pending', ts: Date.now() }); save();
   return { bal: bal(c.u.email) };
 });
 
@@ -521,7 +522,7 @@ R('GET', '/api/admin', c => {
   return {
     stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.filter(x => reportSt(x) == 'pending').length },
     rate: rate(), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
-    withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, note: t.note, st: t.st, ts: t.ts })),
+    withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, st: t.st, ts: t.ts })),
     orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse(), scam: scamLists()
   };
 }, { admin: 1 });

@@ -6,8 +6,6 @@
 // If this page is hosted somewhere OTHER than the Xwadda server (e.g. GitHub Pages), put the server address here,
 // for example: window.XW_API='https://xwadda-escrow.onrender.com';   Leave '' when the server itself serves this page.
 window.XW_API='';
-// Exam/demo mode: the home-page "held in escrow" card shows simulated figures (KES 57,000 to 750,000, new value every 10 minutes) and says so on screen. Set to false for real figures.
-window.XW_DEMO_HELD=true;
 </script>
 <script>
 /* ===== Xwadda local engine: runs the whole backend inside the browser when no server is reachable ===== */
@@ -15,7 +13,7 @@ var XWL=(function(){
 var KEY='xw_local_db_v1';
 var CFGL=window.XW_LOCAL||{};
 var ADMINS=(CFGL.admins||[]).map(function(s){return String(s).trim().toLowerCase()}).filter(Boolean);
-var BASE={rate:+CFGL.rate||129,spr:+CFGL.spread||1.5,payName:CFGL.payName||'Joshua',payPhone:CFGL.payPhone||'0745090132',
+var BASE={rate:+CFGL.rate||129,spr:+CFGL.spread||1.5,payName:CFGL.payName||'Joshua',payPhone:CFGL.payPhone||'0745020932',
  addr:{'USDT BEP20':CFGL.bep20||'0xc08aad31945e614cab90012b9da4dfa53a3ddc2c','USDT TRC20':CFGL.trc20||'TPwAc1xBpMssGYh2ioX7x8QL9PXZStPNLP'}};
 var db={users:{},sessions:{},deals:[],tx:[],orders:[],tickets:[],reports:[],cfg:{},first:''};
 try{Object.assign(db,JSON.parse(localStorage.getItem(KEY)||'{}'))}catch(e){}
@@ -56,12 +54,19 @@ const rid = (p, n) => { const c = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', b = crypto.
 const sq = s => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const money = n => 'KES ' + Math.round(n).toLocaleString('en-US');
 const FEES = a => a <= 2000 ? 0 : a <= 5000 ? 300 : a <= 20000 ? 400 : a <= 40000 ? 500 : a <= 70000 ? 600 : a <= 100000 ? 800 : 1000;
-const isAcct = d => { const t = String(d.desc || '').toLowerCase(); return /\b(accounts?|acc|profiles?)\b/.test(t) && /(freelanc|upwork|fiverr|toptal|academic|essay|writ|paper|assignment|content|ghostwrit)/.test(t); };
-const tot = d => (d.pay == 'Buyer' ? d.amt + d.fee : d.pay == 'Seller' ? d.amt : d.amt + d.fee / 2) + (d.bfee || 0);
-const net = d => d.pay == 'Seller' ? d.amt - d.fee : d.pay == 'Split 50-50' ? d.amt - d.fee / 2 : d.amt;
+const feeSh = d => d.pay == 'Buyer' ? [d.fee, 0] : d.pay == 'Seller' ? [0, d.fee] : [d.fee / 2, d.fee / 2];
+const bfSh = d => { const a = d.bf ? d.bf.amt : 0; return !d.bf || d.bf.by == 'Buyer' ? [a, 0] : d.bf.by == 'Seller' ? [0, a] : [Math.ceil(a / 2), a - Math.ceil(a / 2)]; };
+const tot = d => d.amt + feeSh(d)[0] + bfSh(d)[0];
+const net = d => d.amt - feeSh(d)[1] - bfSh(d)[1];
+const funderOf = d => d.funder || d.buyer;
+const topSum = d => (d.topups || []).filter(t => t.st == 'Confirmed').reduce((s, t) => s + t.a, 0);
+const needsBf = d => (d.brokers || []).length > 0 && !d.bf && d.st == 'Pending';
 const toUsdt = (k, buy) => k / (buy ? rate() - BASE.spr : rate() + BASE.spr);
 const usd = n => n.toFixed(2) + ' USDT';
 const isAdmin = u => !!u && ADMINS.includes(u.email);
+const normPhone = s => { const t = String(s || '').replace(/[^0-9+]/g, ''); return /^\+[1-9]\d{7,14}$/.test(t) ? t : ''; };
+const peep = (e, role) => ({ role, name: nameOf(e), email: e, phone: (db.users[e] || {}).phone || '' });
+const peopleOf = d => [d.buyer && peep(d.buyer, 'Buyer'), d.seller && peep(d.seller, 'Seller')].concat((d.brokers || []).map(e => peep(e, 'Broker'))).filter(Boolean);
 const bal = e => db.tx.reduce((s, t) => t.e == e ? s + t.a : s, 0);
 const pub = u => ({ name: u.name, email: u.email, phone: u.phone || '', w: u.w || {}, numbers: u.numbers || [], admin: isAdmin(u), bal: bal(u.email) });
 const cfgFor = () => ({ rate: rate(), spr: BASE.spr, payName: BASE.payName, payPhone: BASE.payPhone, addr: BASE.addr });
@@ -124,26 +129,30 @@ function newDeal(u, b) {
     id, code, desc, role, amt, fee: FEES(amt), pay, owner: u.email, cp, at: Date.now(), v: 1, mid: 0, msgs: [], st: 'Pending', bc: 0, sc: 0, payout: 'KES',
     buyer: role == 'Buyer' ? u.email : cp, seller: role == 'Seller' ? u.email : cp, j: { buyer: role == 'Buyer' ? 1 : 0, seller: role == 'Seller' ? 1 : 0 }, cancel: {}, pend: {}
   };
-  db.deals.push(d); push(d, { w: 'bot', card: 'welcome' }); push(d, { w: 'bot', card: 'terms' }); if (isAcct(d)) bot(d, '🔐 Account sale: the seller must send the account logins here, in this chat panel (not by WhatsApp, email or DM) so the handover can be tracked. Buyer: check that the login works, then confirm. Never share your M-Pesa PIN or OTP.');
+  db.deals.push(d); push(d, { w: 'bot', card: 'welcome' }); push(d, { w: 'bot', card: 'terms' });
   return d;
 }
 function person(d, r) { const e = d[r]; return { name: nameOf(e), joined: !!d.j[r] && !!e }; }
 function view(d, u, since) {
   const me = u.email, role = roleOf(d, me), adm = isAdmin(u) && !role;
   const o = {
-    id: d.id, code: d.id, desc: d.desc, amt: d.amt, fee: d.fee, pay: d.pay, st: d.st, bc: d.bc, sc: d.sc, payout: d.payout, at: d.at, v: d.v, role, admin: adm, creator: d.role,
+    id: d.id, code: d.code, desc: d.desc, amt: d.amt, fee: d.fee, pay: d.pay, st: d.st, bc: d.bc, sc: d.sc, payout: d.payout, at: d.at, v: d.v, role, admin: adm, creator: d.role,
     total: tot(d), net: net(d), buyer: person(d, 'buyer'), seller: person(d, 'seller'), cancel: d.cancel || {}, payoutDest: dest(d.seller), refundDest: dest(d.buyer), cfg: { rate: rate(), spr: BASE.spr }
   };
-  if (((role == 'buyer' || adm || isBroker(d, me)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) || (isBroker(d, me) && d.st == 'Funded')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
-  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; }
-  o.broker = isBroker(d, me); o.acct = isAcct(d); o.bfee = d.bfee || 0; o.bset = !!d.bset; o.bamt = d.bamt || 0; o.top = d.top || 0; o.myFunded = d.fundedBy == me; o.tops = (d.tops || []).map(t => ({ id: t.id, amt: t.amt, st: t.st, by: nameOf(t.by) })); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
+  if ((role == 'buyer' || adm || (isBroker(d, me) && !role)) && d.bc && d.sc && (d.st == 'Pending' || d.st == 'Verifying')) o.payInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
+  if (adm) { o.buyerEmail = d.buyer; o.sellerEmail = d.seller; o.people = peopleOf(d); }
+  o.broker = isBroker(d, me); o.brokers = (d.brokers || []).map(e => ({ name: nameOf(e), bid: sh('b:' + e).slice(0, 10), me: e == me }));
   if (o.broker && !role && !adm) { o.payoutDest = 'hidden'; o.refundDest = 'hidden'; }
+  o.bf = d.bf ? { amt: d.bf.amt, by: d.bf.by } : null; o.needBf = needsBf(d); o.funder = d.funder || d.st != 'Pending' ? nameOf(funderOf(d)) : '';
+  o.canRelease = d.st == 'Funded' && me == funderOf(d); o.topSum = topSum(d); o.held = d.amt + topSum(d);
+  o.topups = (d.topups || []).slice(-10).map(t => ({ id: t.id, a: t.a, st: t.st, by: nameOf(t.e), m: t.m, ts: t.ts }));
+  if (o.broker && !role && !adm && d.st == 'Funded') o.topInfo = { name: BASE.payName, phone: BASE.payPhone, addr: BASE.addr };
   o.msgs = d.msgs.filter(m => !m.for || m.for == me).slice(-300);
   return o;
 }
 function row(d, u) {
-  const r = { id: d.id, code: d.id, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
-  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; }
+  const r = { id: d.id, code: d.code, desc: d.desc, amt: d.amt, st: d.st, role: roleOf(d, u.email) || (isBroker(d, u.email) ? 'broker' : null), at: d.at, total: tot(d), net: net(d), bc: d.bc, sc: d.sc, buyer: nameOf(d.buyer), seller: nameOf(d.seller) };
+  if (isAdmin(u)) { r.buyerEmail = d.buyer; r.sellerEmail = d.seller; r.people = peopleOf(d); r.tpid = ((d.topups || []).find(t => t.st == 'Verifying') || {}).id || ''; }
   return r;
 }
 function getDeal(id, u) {
@@ -157,33 +166,42 @@ function getDeal(id, u) {
 function doConfirm(d, u) {
   const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can confirm the terms.', 403);
   if (d.st != 'Pending') bad('This deal is already ' + d.st + '.');
-  const k = r == 'buyer' ? 'bc' : 'sc'; if (r == 'buyer' && (d.brokers || []).length && !d.bset) bad('A broker is in this deal. The broker must list their fee or amount before you can confirm as buyer.'); if (d[k]) bad('You already confirmed. Waiting for the other party.');
-  if (!d.buyer || !d.seller || !d.j.buyer || !d.j.seller) bad('The other party has not joined yet. Share the join code ' + d.code + ' with them.');
+  if (needsBf(d)) bad('A broker is in this deal. Waiting for the broker to list their fee before the buyer and seller can confirm.');
+  const k = r == 'buyer' ? 'bc' : 'sc'; if (d[k]) bad('You already confirmed. Waiting for the other party.');
+  if (!d.buyer || !d.seller || !d.j.buyer || !d.j.seller) bad('The other party has not joined yet. Share the Deal ID ' + d.id + ' with them.');
   d[k] = 1; bot(d, (r == 'buyer' ? 'Buyer ' : 'Seller ') + nameOf(u.email) + ' confirmed the deal terms.');
-  if (d.bc && d.sc) bot(d, 'Both parties confirmed. Payment details are now unlocked. Buyer: type "fund" or tap Fund this deal and pay exactly ' + money(tot(d)) + '. Funds stay held until you confirm delivery.');
+  if (d.bc && d.sc) bot(d, 'Both parties confirmed. Payment details are now unlocked. Buyer' + ((d.brokers || []).length ? ' (or the broker)' : '') + ': type "fund" or tap Fund this deal and pay exactly ' + money(tot(d)) + '. ' + ((d.brokers || []).length ? 'Whoever funds the deal is the one who can release the funds.' : 'Funds stay held until you confirm delivery.'));
 }
 function doPaid(d, u, method) {
-  if (roleOf(d, u.email) != 'buyer' && !isBroker(d, u.email)) bad('Only the buyer or a broker in this deal can report payment.', 403);
+  const brk = isBroker(d, u.email) && !roleOf(d, u.email);
+  if (roleOf(d, u.email) != 'buyer' && !brk) bad('Only the buyer or the broker reports payment.', 403);
   if (d.st == 'Verifying') bad('We are already verifying your payment.'); if (d.st != 'Pending') bad('Nothing to pay. Status: ' + d.st + '.');
   if (!(d.bc && d.sc)) bad('Both parties must confirm the terms before payment.');
-  d.st = 'Verifying'; d.method = String(method || 'M-Pesa').slice(0, 30); d.fundedBy = u.email;
-  bot(d, 'Payment reported by ' + (roleOf(d, u.email) ? 'the buyer' : 'broker ' + nameOf(u.email)) + ' (' + d.method + '). We are verifying it and will confirm to both sides when funds are received.');
+  d.st = 'Verifying'; d.method = String(method || 'M-Pesa').slice(0, 30); d.funder = u.email;
+  bot(d, 'Payment reported by the ' + (brk ? 'broker' : 'buyer') + ' (' + d.method + '). We are verifying it and will confirm to both sides when funds are received.');
 }
 function doFunded(d, u) {
   if (!isAdmin(u)) bad('Only Xwadda staff can confirm received funds.', 403);
   if (d.st != 'Verifying' && !(d.st == 'Pending' && d.bc && d.sc)) bad('This deal is not waiting for payment confirmation.');
-  d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).');
+  d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. ' + (funderOf(d) == d.buyer ? 'Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).' : nameOf(funderOf(d)) + ' (the broker who funded this deal) releases the funds once delivery is confirmed. Buyer or seller: type "dispute" if something is wrong.'));
+
+  bot(d, '🔐 Selling an online writing, academic or freelancing account?\n\nSeller: send the account logins here in this chat room (username or email, password, and any recovery email, phone number or 2FA details). Please keep everything inside this room, never on WhatsApp, calls or email, so the delivery is recorded and Xwadda support can review it if there is a dispute.\n\nBuyer: log in, check that the account works and matches what was agreed, then follow the release steps above. If anything is wrong, type \"dispute\" and the funds stay frozen while support reviews the record here.\n\nNever share your M-Pesa PIN or OTP with anyone.');
 }
-function topRefund(d) { (d.tops || []).filter(t => t.st == 'Done').forEach(t => credit(t.by, t.amt, 'refund', d.id, 'Top-up refund ' + d.id)); d.top = 0; }
 function credit(email, a, type, ref, note) { db.tx.push({ id: rid('TX-', 8), e: email, a, type, ref, note: note || '', st: 'Done', ts: Date.now() }); }
 function doRelease(d, u, dry) {
-  const r = roleOf(d, u.email), adm = isAdmin(u) && !r;
-  const br = isBroker(d, u.email) && !r; if (!r && !adm && !br) bad('Only the buyer can release funds.', 403); if (br && d.fundedBy != u.email) bad('A broker can only release funds that they funded themselves.', 403);
+  const r = roleOf(d, u.email), adm = isAdmin(u) && !r, isF = u.email == funderOf(d);
+  if (!isF && !adm) bad(isBroker(d, u.email) ? 'Only the person who funded this deal can release the funds. A broker can release only if the broker funded it.' : r == 'buyer' ? 'The broker funded this deal, so the broker releases the funds. If something is wrong, raise a dispute.' : 'Only the buyer can release funds.', 403);
   if (d.st != 'Funded' && !(adm && d.st == 'Disputed')) bad(d.st == 'Released' ? 'Funds were already released.' : 'Nothing to release yet. Status: ' + d.st + '.');
-  if (r == 'seller') bad('Only the buyer can release funds.', 403);
   if (dry) return;
-  d.st = 'Released'; credit(d.seller, net(d) + (d.top || 0), 'release', d.id, 'Deal ' + d.id); if (d.bfee && d.bfeeBy) credit(d.bfeeBy, d.bfee, 'release', d.id, 'Broker fee ' + d.id);
-  bot(d, (adm ? 'Support released the funds. ' : 'Buyer confirmed delivery. ') + money(net(d) + (d.top || 0)) + (d.payout == 'USDT' ? ' (≈ ' + usd(toUsdt(net(d), 0)) + ')' : '') + ' was added to ' + nameOf(d.seller) + "'s Xwadda balance, less our fee. Payout preference: " + dest(d.seller) + '. The seller can now withdraw it from Wallet & payouts.');
+  const sp = net(d) + topSum(d);
+  d.st = 'Released'; credit(d.seller, sp, 'release', d.id, 'Deal ' + d.id);
+  if (d.bf && d.bf.amt > 0 && (d.brokers || [])[0]) credit(d.brokers[0], d.bf.amt, 'broker_fee', d.id, 'Broker fee ' + d.id);
+  bot(d, (adm ? 'Support released the funds. ' : isF && r != 'buyer' ? 'The broker who funded this deal confirmed delivery. ' : 'Buyer confirmed delivery. ') + money(sp) + (d.payout == 'USDT' ? ' (≈ ' + usd(toUsdt(sp, 0)) + ')' : '') + ' was added to ' + nameOf(d.seller) + "'s Xwadda balance, less our fee. Payout preference: " + dest(d.seller) + '. The seller can now withdraw it from Wallet & payouts.' + (d.bf && d.bf.amt > 0 ? ' The broker fee of ' + money(d.bf.amt) + ' was added to ' + nameOf(d.brokers[0]) + "'s balance." : ''));
+}
+function refundAll(d, note) {
+  const f = funderOf(d); credit(f, tot(d), 'refund', d.id, note);
+  (d.topups || []).filter(t => t.st == 'Confirmed').forEach(t => credit(t.e, t.a, 'refund', d.id, note + ' (top-up)'));
+  return money(tot(d)) + ' was refunded to ' + nameOf(f) + "'s Xwadda balance" + (topSum(d) ? ', and the top-ups went back to the people who added them' : '') + '.';
 }
 function doDispute(d, u, dry) {
   const r = roleOf(d, u.email); if (!r) bad('Only the buyer or the seller can raise a dispute.', 403);
@@ -197,7 +215,7 @@ function doCancel(d, u, dry) {
   if (d.st == 'Funded') {
     if (d.cancel[r]) bad('You already asked to cancel. Waiting for the other party to agree (they type "cancel deal").');
     if (dry) return; d.cancel[r] = 1;
-    if (d.cancel.buyer && d.cancel.seller) { d.st = 'Refunded'; credit(d.fundedBy || d.buyer, tot(d), 'refund', d.id, 'Cancelled deal ' + d.id); topRefund(d); bot(d, 'Both parties agreed to cancel. ' + money(tot(d)) + ' was refunded to ' + nameOf(d.buyer) + "'s Xwadda balance."); }
+    if (d.cancel.buyer && d.cancel.seller) { d.st = 'Refunded'; bot(d, 'Both parties agreed to cancel. ' + refundAll(d, 'Cancelled deal ' + d.id)); }
     else bot(d, 'The ' + r + ' asked to cancel. The ' + (r == 'buyer' ? 'seller' : 'buyer') + ' must also type "cancel deal" to agree. If you cannot agree, raise a dispute.');
     return;
   }
@@ -208,8 +226,8 @@ function doCancel(d, u, dry) {
 function doRefund(d, u) {
   if (!isAdmin(u)) bad('Only Xwadda staff can refund.', 403);
   if (d.st != 'Funded' && d.st != 'Disputed') bad('Only funded or disputed deals can be refunded.');
-  d.st = 'Refunded'; credit(d.fundedBy || d.buyer, tot(d), 'refund', d.id, 'Refund ' + d.id); topRefund(d);
-  bot(d, 'Support refunded ' + money(tot(d)) + ' to ' + nameOf(d.buyer) + "'s Xwadda balance.");
+  d.st = 'Refunded';
+  bot(d, 'Support refunded: ' + refundAll(d, 'Refund ' + d.id));
 }
 
 /* --- chat bot --- */
@@ -219,7 +237,7 @@ function lev(a, b) {
   return m[a.length][b.length];
 }
 const KW = ['help', 'status', 'fund', 'fees', 'cancel', 'release', 'dispute', 'confirm', 'paid', 'refund', 'human', 'summary', 'balance', 'people', 'rates', 'code', 'menu', 'withdraw'];
-const HELP = 'I understand plain words as well as commands. Try:\n• deal id — the Deal ID and join code\n• status — where the deal stands\n• confirm — confirm the deal terms\n• fund — how and where to pay\n• paid — tell us you have paid\n• release — release funds to the seller (buyer)\n• cancel deal — cancel (or ask to cancel)\n• dispute — freeze funds and call support\n• fees, summary, people, rates, balance\n• human — talk to a person';
+const HELP = 'I understand plain words as well as commands. Try:\n• deal id — the Deal ID to share\n• status — where the deal stands\n• confirm — confirm the deal terms\n• fund — how and where to pay\n• paid — tell us you have paid\n• release — release funds to the seller (buyer)\n• cancel deal — cancel (or ask to cancel)\n• dispute — freeze funds and call support\n• fees, summary, people, rates, balance\n• human — talk to a person';
 const ACTS = { cancel: doCancel, release: doRelease, dispute: doDispute };
 function ask(d, u, a, text) {
   try { ACTS[a](d, u, true); } catch (e) { return bot(d, e.message); }
@@ -254,10 +272,10 @@ function hear(d, u, raw) {
     if (!(d.bc && d.sc)) return bot(d, 'Payment details unlock after both sides confirm. Buyer confirmed: ' + (d.bc ? 'yes' : 'no') + '. Seller confirmed: ' + (d.sc ? 'yes' : 'no') + '. Type "confirm" to confirm your side.');
     return bot(d, 'To fund deal ' + d.id + ' pay ' + money(tot(d)) + ' (or ≈ ' + usd(toUsdt(tot(d), 1)) + '):\n• M-Pesa Send Money to ' + BASE.payPhone + ' (' + BASE.payName + '). Put ' + d.id + ' in the note.\n• USDT BEP20: ' + BASE.addr['USDT BEP20'] + '\n• USDT TRC20: ' + BASE.addr['USDT TRC20'] + '\nThese details are also on the Fund page. After paying, type "paid". I never ask for your M-Pesa PIN.');
   }
-  if (T(/\b(deal id|id|ref|reference|deal number|escrow id|room id|deal code)\b/) && !T(/\bjoin\b/)) return bot(d, 'Deal ID: ' + d.id + '\nJoin code: ' + d.code);
-  if (T(/\b(join|invite|code|link)\b/)) return bot(d, 'Join code: ' + d.code + '\nThe other party signs in, opens "Join with a code" and enters it, or opens your Invite link. Deal ID: ' + d.id + '.');
+  if (T(/\b(deal id|id|ref|reference|deal number|escrow id|room id|deal code)\b/) && !T(/\bjoin\b/)) return bot(d, 'Deal ID: ' + d.id + '\nShare this Deal ID with the other party. They enter it under "Join a deal".');
+  if (T(/\b(join|invite|code|link)\b/)) return bot(d, 'Deal ID: ' + d.id + '\nThe other party signs in, opens "Join a deal" and enters this Deal ID, or opens your Invite link.');
   if (T(/\b(status|progress|state|where are we|what next|next step)\b/)) {
-    const nx = d.st == 'Pending' ? (!(d.j.buyer && d.j.seller) ? 'Waiting for the other party to join with code ' + d.code + '.' : !(d.bc && d.sc) ? 'Waiting for confirmation (type "confirm").' : 'Buyer: type "fund" to pay.') : d.st == 'Verifying' ? 'We are verifying the payment.' : d.st == 'Funded' ? 'Seller delivers, then the buyer types "release".' : d.st == 'Disputed' ? 'Support is reviewing the dispute.' : 'This deal is closed.';
+    const nx = d.st == 'Pending' ? (!(d.j.buyer && d.j.seller) ? 'Waiting for the other party to join with Deal ID ' + d.id + '.' : !(d.bc && d.sc) ? 'Waiting for confirmation (type "confirm").' : 'Buyer: type "fund" to pay.') : d.st == 'Verifying' ? 'We are verifying the payment.' : d.st == 'Funded' ? 'Seller delivers, then the buyer types "release".' : d.st == 'Disputed' ? 'Support is reviewing the dispute.' : 'This deal is closed.';
     return bot(d, 'Deal ' + d.id + ': ' + d.st + '.\nBuyer confirmed: ' + (d.bc ? 'yes' : 'no') + '. Seller confirmed: ' + (d.sc ? 'yes' : 'no') + '.\nNext: ' + nx);
   }
   if (T(/\b(fees?|charges?|cost|commission)\b/)) return bot(d, 'Fee for this deal: ' + (d.fee ? money(d.fee) : 'KES 0') + ', paid by ' + d.pay + '. Tiers: up to 2,000 free; to 5,000 KES 300; to 20,000 KES 400; to 40,000 KES 500; to 70,000 KES 600; to 100,000 KES 800; above 100,000 KES 1,000.');
@@ -269,11 +287,11 @@ function hear(d, u, raw) {
     db.tickets.push({ id: rid('TK-', 6), e: me, deal: d.id, msg: 'Asked for a human in room ' + d.id + ': ' + raw.slice(0, 300), st: 'open', ts: Date.now() });
     return bot(d, 'Done. A human agent has been notified about deal ' + d.id + ' and will reply in this room or by email. Meanwhile you can keep chatting here.');
   }
-  if (T(/\b(pin|otp)\b/) || (!isAcct(d) && T(/\b(password|passcode)\b/))) return bot(d, 'Never share your M-Pesa PIN, password or OTP with anyone, including people who claim to be Xwadda. I will never ask for them.'); if (isAcct(d) && T(/\b(password|passcode|login|logins|username|email)\b/)) return bot(d, '🔐 Login details noted in this room for tracking. Buyer: check that the login works, then confirm. Seller: do not change the details until funds are released. Never share your M-Pesa PIN or OTP here.');
+  if (T(/\b(pin|password|otp|passcode)\b/)) return bot(d, 'Never share your M-Pesa PIN, password or OTP with anyone, including people who claim to be Xwadda. I will never ask for them.');
   if (T(/^(help|menu|commands?|options|what can you do|how does this work|how to use|\?)/)) return bot(d, HELP);
   if (T(/^(hi|hello|hey|hallo|habari|niaje|sasa|mambo|good (morning|afternoon|evening))\b/) && words.length <= 3) return bot(d, 'Hello ' + u.name.split(' ')[0] + '! Deal ' + d.id + ' is ' + d.st + '. Type "help" to see what I can do.');
   if (T(/\b(thanks?|thank you|asante)\b/) && words.length <= 3) return bot(d, 'You are welcome. I am here if you need anything.');
-  if (words.length <= 3 || addressed) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
+  if ((words.length <= 3 || addressed) && !(isAdmin(u) && !role)) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
 }
 
 /* ---------- routes ---------- */
@@ -290,7 +308,8 @@ R('POST', '/api/register', c => {
   if (!n || !/^\S+@\S+\.\S+$/.test(e) || e.length > 120) bad('Enter your full name and a valid email.');
   if (db.users[e]) bad('An account with this email already exists. Please sign in.', 409);
   const pr = pwProblems(p, n, e); if (pr.length) bad('Password needs: ' + pr.join(', ') + '.');
-  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], created: Date.now() };
+  const ph = normPhone(c.b.phone); if (!ph) bad('Enter your phone number with its country code, for example +254 712 345 678.');
+  const key = genKey(), u = { name: n, email: e, pw: mkHash(p), rk: mkHash(normKey(key)), w: {}, numbers: [], phone: ph, created: Date.now() };
   if (!db.first) db.first = e; db.users[e] = u; save(); return Object.assign(sess(u), { recoveryKey: key });
 }, { pub: 1 });
 
@@ -319,7 +338,7 @@ R('POST', '/api/password', c => {
 });
 R('PUT', '/api/profile', c => {
   const n = String(c.b.name || '').trim().slice(0, 80); if (n) c.u.name = n;
-  const ph = String(c.b.phone || '').replace(/[^0-9+]/g, '').slice(0, 16); if (ph) c.u.phone = ph; save(); return pub(c.u);
+  if (c.b.phone) { const ph = normPhone(c.b.phone); if (!ph) bad('Enter a valid phone number with its country code.'); c.u.phone = ph; } save(); return pub(c.u);
 });
 R('PUT', '/api/wallet', c => {
   const w = c.b.w || {}, o = { pref: String(w.pref || '') };
@@ -341,24 +360,27 @@ R('PUT', '/api/numbers', c => {
 R('GET', '/api/public/stats', c => {
   lim('ps:' + c.ip, 240, 6e4);
   const h = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed');
-  const sec = db.deals.filter(d => ['Funded', 'Released', 'Disputed', 'Refunded'].includes(d.st)), cf = db.reports.filter(x => reportSt(x) == 'confirmed');
-  return { held: h.reduce((s, d) => s + d.amt + (d.top || 0), 0), rate: rate(), deals: h.length, secured: sec.reduce((s, d) => s + d.amt + (d.top || 0), 0), lost: cf.reduce((s, x) => s + (x.amt || 0), 0), lostN: cf.length, build: 'r7', t: Date.now() };
+  const held = h.reduce((s, d) => s + d.amt + topSum(d), 0);
+  const sec = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed' || d.st == 'Released'), secured = sec.reduce((s, d) => s + d.amt + topSum(d), 0);
+  const cr = db.reports.filter(x => reportSt(x) == 'confirmed'), lost = cr.reduce((s, x) => s + (x.lost || 0), 0), u2 = k => Math.round(k / rate() * 100) / 100;
+  return { held, usdt: u2(held), rate: rate(), deals: h.length, secured, securedUsdt: u2(secured), securedDeals: sec.length, lost, lostUsdt: u2(lost), scamReports: cr.length, t: Date.now() };
 }, { pub: 1 });
 
 /* deals */
 R('GET', '/api/deals', c => ({ deals: db.deals.filter(d => mine(d, c.u.email)).map(d => row(d, c.u)).reverse(), user: pub(c.u) }));
 R('POST', '/api/deals', c => { lim('mk:' + c.u.email, 30, 36e5); return view(newDeal(c.u, c.b), c.u); });
 R('POST', '/api/join', c => {
-  lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the deal join code.');
+  lim('join:' + c.u.email, 20, 6e5); const k = sq(c.b.code); if (!k) bad('Enter the Deal ID.');
   if (c.b.as == 'broker') {
     const bd = db.deals.find(x => sq(x.id) == k); if (!bd) bad('No deal found with that Deal ID. Brokers join with the Deal ID (XW-...) from the buyer or seller.', 404);
     const bm = c.u.email; if (roleOf(bd, bm) || bd.owner == bm || isBroker(bd, bm)) return { id: bd.id, already: true };
-    if (!ACTIVE.includes(bd.st)) bad('This deal is already ' + bd.st + ' and cannot be joined.');
-    bd.brokers = bd.brokers || []; if (bd.brokers.length >= 3) bad('This deal already has the maximum number of brokers.');
-    bd.brokers.push(bm); bot(bd, '🤝 ' + c.u.name + ' joined as a Broker. Brokers can read and chat in this room, but cannot confirm, pay, release or cancel. The buyer or seller can remove a broker from the side panel.');
+    if (bd.st != 'Pending') bad('Brokers can only join before the deal is funded, so their fee can be listed first.');
+    bd.brokers = bd.brokers || []; if (bd.brokers.length >= 1) bad('This deal already has a broker.');
+    bd.brokers.push(bm); const rs = bd.bc || bd.sc; bd.bc = 0; bd.sc = 0;
+    bot(bd, '🤝 ' + c.u.name + ' joined as the Broker. The broker must list their fee before the buyer and seller confirm' + (rs ? ' (confirmations were reset)' : '') + '. Brokers can chat, add a top-up after funding, and release only if they funded the deal.');
     return { id: bd.id };
   }
-  const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that code. Check it and try again.', 404);
+  const d = db.deals.find(x => sq(x.code) == k || sq(x.id) == k); if (!d) bad('No deal found with that ID. Check it and try again.', 404);
   const me = c.u.email; if (roleOf(d, me) || d.owner == me || isBroker(d, me)) { return { id: d.id, already: true }; }
   if (!ACTIVE.includes(d.st)) bad('This deal is already ' + d.st + ' and cannot be joined.');
   const slot = d.role == 'Buyer' ? 'seller' : 'buyer';
@@ -379,27 +401,6 @@ act('fund', (d, u) => doFunded(d, u));
 act('release', (d, u) => doRelease(d, u));
 act('dispute', (d, u) => doDispute(d, u));
 act('cancel', (d, u) => doCancel(d, u));
-act('brokerfee', (d, u, b) => {
-  if (!isBroker(d, u.email)) bad('Only a broker in this deal can list a broker fee.', 403);
-  if (d.st != 'Pending' || d.bc) bad('The broker fee can only be listed before the buyer confirms and funding starts.');
-  const f = Math.round(+b.fee), a = Math.round(+b.amt) || 0; if (!(f >= 0) || f > 1e6) bad('Enter a broker fee of KES 0 or more.');
-  d.bfee = f; d.bamt = a; d.bfeeBy = u.email; d.bset = 1;
-  bot(d, '🤝 Broker ' + nameOf(u.email) + ' listed their fee: ' + money(f) + (a ? ' and will fund up to ' + money(a) : '') + '. New buyer total: ' + money(tot(d)) + '. The buyer can now confirm as buyer.');
-});
-act('topup', (d, u, b) => {
-  if (!isBroker(d, u.email)) bad('Only a broker can top up the held funds.', 403);
-  if (d.st != 'Funded') bad('Top-ups are for funds already held in escrow. Status: ' + d.st + '.');
-  const a = Math.round(+b.amount); if (!(a >= 100) || a > 5e6) bad('A top-up must be at least KES 100.');
-  d.tops = d.tops || []; if (d.tops.filter(t => t.st == 'Verifying').length >= 3) bad('You already have pending top-ups. Wait for support to confirm them.');
-  const t = { id: rid('TP-', 6), by: u.email, amt: a, st: 'Verifying', ts: Date.now() }; d.tops.push(t);
-  bot(d, '➕ Broker ' + nameOf(u.email) + ' reported a top-up of ' + money(a) + ' (' + t.id + '). We are verifying it and will add it to the held funds.');
-});
-act('topupok', (d, u, b) => {
-  if (!isAdmin(u)) bad('Only Xwadda staff can confirm top-ups.', 403);
-  const t = (d.tops || []).find(x => x.id == b.tid && x.st == 'Verifying'); if (!t) bad('Top-up not found.', 404);
-  t.st = 'Done'; d.top = (d.top || 0) + t.amt;
-  bot(d, '✅ Top-up ' + t.id + ' of ' + money(t.amt) + ' confirmed. Funds now held for this deal: ' + money(d.amt + d.top) + '.');
-});
 act('refund', (d, u) => doRefund(d, u));
 act('payout', (d, u, b) => {
   if (roleOf(d, u.email) != 'seller') bad('Only the seller sets the payout currency.', 403);
@@ -416,9 +417,40 @@ R('POST', '/api/deals/:id/brokers/remove', c => {
   const d = getDeal(c.p.id, c.u), me = c.u.email, r = roleOf(d, me), adm = isAdmin(c.u);
   const target = (d.brokers || []).find(e => sh('b:' + e).slice(0, 10) == String(c.b.bid || '')); if (!target) bad('Broker not found.', 404);
   if (!(r || d.owner == me || adm || target == me)) bad('Only the buyer, the seller or the broker can do that.', 403);
-  d.brokers = d.brokers.filter(e => e != target); if (d.bfeeBy == target && d.st == 'Pending') { d.bfee = 0; d.bamt = 0; d.bset = 0; d.bfeeBy = ''; d.bc = 0; }
+  if (d.st != 'Pending' && !adm) bad('A broker cannot leave or be removed after the deal is funded.');
+  d.brokers = d.brokers.filter(e => e != target);
+  if (!d.brokers.length) { d.bf = null; d.bc = 0; d.sc = 0; }
   bot(d, '🤝 ' + nameOf(target) + (target == me ? ' left the deal as a broker.' : ' was removed as a broker.'));
   return (target == me && !r && !adm) ? { left: true } : view(d, c.u);
+});
+
+R('POST', '/api/deals/:id/broker-fee', c => {
+  const d = getDeal(c.p.id, c.u), me = c.u.email;
+  if (!isBroker(d, me) || roleOf(d, me)) bad('Only the broker can list the broker fee.', 403);
+  if (d.st != 'Pending') bad('The broker fee can only be listed before the deal is funded.');
+  const a = Math.round(+c.b.amount); if (!(a >= 0) || a > d.amt) bad('Enter a fee from KES 0 up to the deal amount.');
+  const by = ['Buyer', 'Seller', 'Split 50-50'].includes(c.b.by) ? c.b.by : 'Buyer';
+  if (net(Object.assign({}, d, { bf: { amt: a, by } })) < 0) bad('That fee is too high: the seller would receive less than nothing.');
+  const rs = d.bc || d.sc; d.bf = { amt: a, by }; d.bc = 0; d.sc = 0;
+  bot(d, '🤝 Broker ' + c.u.name + ' listed a broker fee of ' + money(a) + ' (paid by ' + by + '). Buyer pays ' + money(tot(d)) + '. Seller receives ' + money(net(d)) + '. Buyer and seller can now confirm the terms' + (rs ? ' again' : '') + '.');
+  return view(d, c.u);
+});
+R('POST', '/api/deals/:id/topup', c => {
+  const d = getDeal(c.p.id, c.u), me = c.u.email; lim('tu:' + me, 10, 36e5);
+  if (!isBroker(d, me) || roleOf(d, me)) bad('Only the broker can top up this deal.', 403);
+  if (d.st != 'Funded') bad('A top-up can be added once the deal is funded and before it is released. Status: ' + d.st + '.');
+  const a = numArg(c.b.amount, 100, 5e6, 'Enter a top-up of at least KES 100.');
+  d.topups = d.topups || []; if (d.topups.some(t => t.st == 'Verifying')) bad('A top-up is already being verified. Please wait until we confirm it.');
+  d.topups.push({ id: rid('TU-', 6), e: me, a, m: String(c.b.method || 'M-Pesa').slice(0, 30), st: 'Verifying', ts: Date.now() });
+  bot(d, '➕ Broker ' + c.u.name + ' reported a top-up of ' + money(a) + ' (' + String(c.b.method || 'M-Pesa').slice(0, 30) + '). We are verifying it and will confirm here when it arrives.');
+  return view(d, c.u);
+});
+R('POST', '/api/deals/:id/topup/:tid', c => {
+  const d = getDeal(c.p.id, c.u); if (!isAdmin(c.u)) bad('Only Xwadda staff can confirm top-ups.', 403);
+  const t = (d.topups || []).find(x => x.id == c.p.tid); if (!t) bad('Top-up not found.', 404); if (t.st != 'Verifying') bad('That top-up is already ' + t.st + '.');
+  if (c.b.action == 'reject') { t.st = 'Rejected'; bot(d, 'The top-up of ' + money(t.a) + ' was not confirmed. Contact support if you believe this is a mistake.'); }
+  else { if (d.st != 'Funded') bad('The deal is no longer funded.'); t.st = 'Confirmed'; bot(d, '✅ Top-up of ' + money(t.a) + ' confirmed. ' + money(d.amt + topSum(d)) + ' is now held for this deal.'); }
+  return view(d, c.u);
 });
 
 /* wallet */
@@ -446,24 +478,25 @@ R('POST', '/api/kiosk', c => {
 R('GET', '/api/orders', c => ({ orders: db.orders.filter(o => o.e == c.u.email).slice(-30).reverse() }));
 const normV = v => { v = lc(v).replace(/[\s-]/g, ''); if (/^\+?\d{9,15}$/.test(v)) { v = v.replace('+', ''); if (v[0] == '0') v = '254' + v.slice(1); else if (/^[71]\d{8}$/.test(v)) v = '254' + v; } return v; };
 const reportSt = x => x.st || 'pending';
-const lostAmt = a => Math.max(0, Math.min(1e8, Math.round(+a) || 0));
 function scamLists() {
   const cnt = {}; db.reports.filter(x => reportSt(x) != 'rejected').forEach(x => { cnt[x.v] = (cnt[x.v] || 0) + 1; });
-  const pending = db.reports.filter(x => reportSt(x) == 'pending').slice(-100).reverse().map(x => ({ id: x.id, v: x.v, kind: x.kind, note: x.note, e: x.e, ts: x.ts, n: cnt[x.v] }));
+  const pending = db.reports.filter(x => reportSt(x) == 'pending').slice(-100).reverse().map(x => ({ id: x.id, v: x.v, kind: x.kind, note: x.note, lost: x.lost || 0, e: x.e, ts: x.ts, n: cnt[x.v] }));
   const seen = {}, confirmed = [];
-  db.reports.filter(x => reportSt(x) == 'confirmed').reverse().forEach(x => { if (seen[x.v]) { seen[x.v].n++; return; } seen[x.v] = { id: x.id, v: x.v, kind: x.kind, n: 1, ct: x.ct || x.ts, by: x.by || '' }; confirmed.push(seen[x.v]); });
+  db.reports.filter(x => reportSt(x) == 'confirmed').reverse().forEach(x => { if (seen[x.v]) { seen[x.v].n++; seen[x.v].lost += x.lost || 0; return; } seen[x.v] = { id: x.id, v: x.v, kind: x.kind, n: 1, lost: x.lost || 0, ct: x.ct || x.ts, by: x.by || '' }; confirmed.push(seen[x.v]); });
   return { pending, confirmed: confirmed.slice(0, 200) };
 }
 R('GET', '/api/scam/check', c => {
   lim('sc:' + c.u.email, 60, 36e5); const v = normV(c.q.get('value')); if (v.length < 4) bad('Enter a number, email, wallet or handle to check.');
   const all = db.reports.filter(x => x.v == v), r = all.filter(x => reportSt(x) == 'confirmed'), p = all.filter(x => reportSt(x) == 'pending');
-  return { count: r.length, pending: p.length, kinds: [...new Set(r.map(x => x.kind))], total: r.reduce((s, x) => s + (x.amt || 0), 0), rate: rate(), reports: r.slice().reverse().slice(0, 10).map(x => ({ kind: x.kind, note: x.note.slice(0, 300), amt: x.amt || 0, ts: x.ct || x.ts })), latest: r.slice(-3).reverse().map(x => ({ note: x.note.slice(0, 140), ts: x.ct || x.ts })) };
+  const total = r.reduce((s, x) => s + (x.lost || 0), 0);
+  return { count: r.length, pending: p.length, kinds: [...new Set(r.map(x => x.kind))], total, totalUsdt: Math.round(total / rate() * 100) / 100, reports: r.slice(-20).reverse().map(x => ({ note: x.note.slice(0, 300), lost: x.lost || 0, kind: x.kind, ts: x.ct || x.ts })) };
 });
 R('POST', '/api/scam/report', c => {
   lim('sr:' + c.u.email, 5, 864e5); const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
   if (v.length < 4 || note.length < 10) bad('Add the number, wallet, email or handle, and a short description of what happened.');
+  const lost = (c.b.lost === '' || c.b.lost == null) ? 0 : numArg(c.b.lost, 0, 1e9, 'Enter the amount lost as a number in KES, or leave it empty.');
   if (db.reports.some(x => x.v == v && x.e == c.u.email && reportSt(x) != 'rejected')) bad('You already reported this one. Thank you, our team is reviewing it.');
-  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, amt: lostAmt(c.b.amount), st: 'pending', ts: Date.now() }); save(); return { ok: true };
+  db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, lost, st: 'pending', ts: Date.now() }); save(); return { ok: true };
 });
 R('POST', '/api/support', c => {
   lim('sp:' + c.u.email, 10, 36e5); const m = String(c.b.msg || '').trim().slice(0, 1500); if (m.length < 5) bad('Tell us a little more so we can help.');
@@ -474,8 +507,8 @@ R('POST', '/api/support', c => {
 R('GET', '/api/admin', c => {
   const rel = db.deals.filter(d => d.st == 'Released');
   return {
-    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, heldKes: db.deals.filter(d => d.st == 'Funded').reduce((s, d) => s + d.amt + (d.top || 0), 0), reports: db.reports.filter(x => reportSt(x) == 'pending').length },
-    rate: rate(), users: Object.values(db.users).sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 30).map(u => ({ name: u.name, email: u.email, phone: u.phone || '', ts: u.created || 0 })), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
+    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.filter(x => reportSt(x) == 'pending').length },
+    rate: rate(), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
     withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, st: t.st, ts: t.ts })),
     orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse(), scam: scamLists()
   };
@@ -498,7 +531,8 @@ R('POST', '/api/admin/scam', c => {
   const v = normV(c.b.value), note = String(c.b.note || '').trim().slice(0, 500);
   if (v.length < 4 || note.length < 5) bad('Add the number, wallet, email or handle, and a short note.');
   if (db.reports.some(x => x.v == v && reportSt(x) == 'confirmed')) bad('That one is already on the scam list.');
-  const now = Date.now(); db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, amt: lostAmt(c.b.amount), st: 'confirmed', ts: now, ct: now, by: c.u.email }); save(); return { ok: true };
+  const lost = (c.b.lost === '' || c.b.lost == null) ? 0 : numArg(c.b.lost, 0, 1e9, 'Enter the amount lost as a number in KES, or leave it empty.');
+  const now = Date.now(); db.reports.push({ id: rid('SR-', 6), e: c.u.email, kind: String(c.b.kind || 'Other').slice(0, 30), v, note, lost, st: 'confirmed', ts: now, ct: now, by: c.u.email }); save(); return { ok: true };
 }, { admin: 1 });
 R('POST', '/api/admin/tickets/:id', c => { const t = db.tickets.find(x => x.id == c.p.id); if (!t) bad('Not found.', 404); t.st = 'closed'; save(); return { ok: true }; }, { admin: 1 });
 
@@ -598,13 +632,36 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 .msg{max-width:min(92%,640px)}
 .logo{white-space:nowrap}header.wide nav>span:last-child{display:flex;gap:6px}@media(max-width:480px){.logo{font-size:17px}.logo img{height:24px}}
 .kv .v{text-transform:none}.cap{text-transform:capitalize}
-.held{margin-top:14px;text-align:center;color:#fff;border-radius:16px;padding:20px 16px;background:linear-gradient(135deg,#1d4ed8,#0ea5e9 55%,#14b8a6);background-size:200% 200%;animation:hg 8s ease infinite;box-shadow:0 10px 30px rgba(29,78,216,.28)}
-.held small{display:block;letter-spacing:.1em;font-size:12px;opacity:.92}.hrow{display:flex;justify-content:center;gap:30px;flex-wrap:wrap;margin:8px 0}.hrow b{display:block;font-size:clamp(26px,5vw,40px)}
-.live{display:inline-block;width:10px;height:10px;border-radius:50%;background:#4ade80;margin-right:8px;animation:pl 1.6s infinite}
-@keyframes hg{50%{background-position:100% 50%}}@keyframes pl{0%{box-shadow:0 0 0 0 rgba(74,222,128,.7)}100%{box-shadow:0 0 0 12px rgba(74,222,128,0)}}
-.duo{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}@media(max-width:620px){.duo{grid-template-columns:1fr}}
-.mbar{border-radius:14px;padding:16px;color:#fff;text-align:center}.mbar small{display:block;letter-spacing:.08em;font-size:11px;opacity:.9}.mbar b{display:block;font-size:clamp(22px,4vw,32px);margin:4px 0}.mbar em{display:block;font-style:normal;opacity:.95}.mbar span{display:block;font-size:12px;opacity:.85;margin-top:4px}
-.mbar.sec{background:linear-gradient(135deg,#0f766e,#14b8a6)}.mbar.lost{background:linear-gradient(135deg,#b91c1c,#f97316)}
+.held{position:relative;overflow:hidden;margin-top:16px;padding:18px 20px;border-radius:16px;color:#fff;background:linear-gradient(120deg,#0f766e,#1d4ed8,#7c3aed,#0f766e);background-size:300% 300%;animation:heldBg 10s ease infinite;box-shadow:0 10px 30px rgba(29,78,216,.28)}
+.held small{letter-spacing:.1em;font-size:12px;font-weight:700;opacity:.9}
+.held-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;font-weight:700;letter-spacing:.1em}
+.live{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:99px}
+.live i{width:9px;height:9px;border-radius:50%;background:#4ade80;animation:livePulse 1.6s infinite}
+.held-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.held-grid>div{background:rgba(255,255,255,.14);border-radius:12px;padding:12px 14px}
+.held-grid b{display:block;font-size:clamp(22px,5vw,36px);font-variant-numeric:tabular-nums;line-height:1.15;margin-top:2px}
+.held-sub{margin-top:10px;font-size:14px;opacity:.95}
+.held-bar{height:4px;border-radius:4px;background:rgba(255,255,255,.22);margin-top:12px;overflow:hidden}.held-bar span{display:block;height:100%;width:35%;background:#fff;border-radius:4px;animation:heldBar 2.2s ease-in-out infinite}
+.held.pop .held-grid b{animation:heldPop .9s ease}
+@keyframes heldBg{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}
+@keyframes livePulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.8)}70%{box-shadow:0 0 0 9px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+@keyframes heldBar{0%{margin-left:-35%}100%{margin-left:100%}}
+@keyframes heldPop{0%{transform:scale(1)}30%{transform:scale(1.07);text-shadow:0 0 18px #86efac}100%{transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){.held,.live i,.held-bar span,.held.pop .held-grid b{animation:none}}
+@media(max-width:520px){.held-grid{grid-template-columns:1fr}}
+.tw{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.tcard{position:relative;overflow:hidden;border-radius:16px;padding:16px 18px;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.tcard.sec{background:linear-gradient(135deg,#047857,#0d9488,#0e7490)}
+.tcard.lost{background:linear-gradient(135deg,#b91c1c,#ea580c,#be123c)}
+.tcard small{display:block;letter-spacing:.1em;font-size:12px;font-weight:700;opacity:.92}
+.tcard b{display:block;font-size:clamp(22px,4.6vw,32px);font-variant-numeric:tabular-nums;line-height:1.15;margin:6px 0 2px}
+.tcard span{display:block;font-size:14px;opacity:.95;font-variant-numeric:tabular-nums}
+.tcard em{display:block;font-style:normal;font-size:13px;opacity:.9;margin-top:8px}
+.tcard::after{content:"";position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);transform:skewX(-20deg);animation:tSheen 5s ease-in-out infinite}
+.tcard.pop b{animation:heldPop .9s ease}
+@keyframes tSheen{0%{left:-60%}60%,100%{left:130%}}
+@media(prefers-reduced-motion:reduce){.tcard::after,.tcard.pop b{animation:none}}
+@media(max-width:560px){.tw{grid-template-columns:1fr}}
 </style></head><body>
 <header class="wide"><nav><span class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFoAAAA2CAYAAABHno4jAAAItUlEQVR42u2caaxdUxTHf+fe+6qvT0XMQxEJErQ1R0kQUYI8UsMHDdIoLQ0SPghCRdVUQ1vUPFUQQ0RIkJgpPjSGNoaiRFDzVGqo99499/pw1/JWz9t7n3PvPfe+gZ3c3PfO28Pa/73Wf6299j4vYt1SACrAeOAJoCrPokS9WJ7PAp4DivKs3lKQ7zHAC8Cm8nuUGKsELAOOlTYFoAxcApwK9EgdRP4CsBI4nNYXnfsFwEyRq5SoU/Y1BLhbgA59PgFGexYjq5AAN2YY6wCzODqRKwL1P6Y9RWW5PkX+ASWSyawnWhQDfaIp9tMnHSxIgFYvyIdKP30ylh2jV/52XmJS+j3X1NM2Zfl+r81Az3PIovNZmQbCgQaEimOVyvI9qU6wI6nbCawwALn6XgZ0SP3IAXTVLHpVJlcF3m8z0Nc4ZFHMvix4GisvLpEOSh4OjqSjuwzfRhm5OQZuAHaWn+0iqan9DZycEH44FcVim0Kgkjq82WKGLrDVee4KXGTaZHEe+wMzzKImxy4Cl4tmlmScEVtUy/Y15pykEDX7GJiYQiFKGV3AB4bHXJShABcdVjJcqOPfT5r2qbYtFQ9fdGhWZLT7dgNyFKCM64BdHBag1NADnGTCoupw19hChjpqxnOBjzxgFwWUScDZDs61IO8JnOapU5FnC4DlAd8wYosuyN6JECpJITHwB7Btop1SxiihjKqDMuJAlMFIpw6raSXgLTF7105QI5AuYKGAmnSAs4Uyyg5r0sWaMYyjjNxCFd3IfOzRShsP7yjtOuR7LwnXXNagwN6U0BL+axqddFRTE2AlOfZq2Z6XjDXcK4uUdJTa5kPg/CbyJsPeGboo5B3Z21vHqMmcz4A5AmYkoJ0LTBBtLjroIhIn+tdIiTLyopCiJJNWmthXTeZgqTdK6k4UKwhRxqKMlPGfoA7X9ni6iTZKwG3Ay4YyqqL5owKU8alQRmEkh3KFBtspsK+LAxsFrJKcrKZMyxJBTHZQBoYyZgF/mqjl/+KhkPWAd4EpJsqIgJ0kpo4DlLGwTsoYttRRamIAdWQ9wEHAr0Yrq8C1ElMnt9nqUL+QuHpEU0az1GHBjoDV9B97lYUOjvZQhi7EDOD3IUYZEY2dFLUcaAu2pkzHSRxdcYCs+Y2bgeeFZuIhpHR2XxANNaAx2qy7uw3MApCIs3+UOLuA59ByEEqHyHcV8IjBJjewSzn1o9m76eIUy56+I2Aa8JMnCzgYpSQO7AyJmgDWCLWVjHMddI1WTd5SPG/F068Ke+gQ8lEdohQzgVvpP4g+TX4v52j1uVnFU6x7QuL6qHZMNpbQzJjNhHfax1QGnh5pf1ckEmMNh3d5UAbUTkNCg1gQ9CpAF+GccyuB1vbdssMNxfpzU2i25UDrjaGNxMHFDEybuj59ZmveqJ9oBmhtuzf990Zcctu7KzMDsrYs12EdWwW4A9jERB7JbXbFIVgZOIfa7aNyExTSqNOeCDxpnF0hsPONqZ2FzpK2He10hirA8cBxgVxGwThLlzXcA6yfc6iZJvPW1O4VbuWJ9ZNg6871FuAU0diOdgCtG5PNZXBXlKFaslCcZJTYmGgMvQNwKdnugzRLczG1m1FPA9vjPxyOPbtF1exuAbvUavPTAR70cFKSIydInWQ+Wo+9eoH96oxC6uFotZ7R1G6s+ng09vxs5dW7dd1GjpY4QwViiqdTdSAVagcAGlFc6KmvoeAK0k++GwE6MpbyWAAIffZmSj2NTv4A9pB+O/MGWjVjY+ArT5Shg8w3gBTls9QTZ2cNo+oFeoUBebE868V/UfMDceoAjwbqa/+/GEss5Am0Tu52D2C62quAsSZXoFawj8SsfR4KKdN/B7qYA9B6bff+DCC/D2xhxu4Ens1AMz8bsBfkAbRO/JhAZyr0YQ6wFJg5KRSyXBYojUKyAL0cuDKDvN8A2xmZddzRwIsZ2v8mTv2iZoFWnhsrlBG6mOi7lxHJs9HA2ykUMjuDVoeADjm5pLzf4b6YqdbYCbyWAeyvqF1xrgY2bZkpY2FKlLFK0qM+bdSJ7CVm7KMQvZ8XAjsr0HEKx44PjKPPthC+9+VxKhl2w9WslHFkisfWKCOrJl6bQiFvOUy5UY1OghwDa01iq5Rhn7EltdP6ENhxo0ArZXRRuxRTCUQZN2SMGNQ5jhEOrQZo6JIM+YV6gFb5yyZVW0+EMwH4IYUeGgJaB1gUoAyNMjauIwa2UYjr3RV91kfttQuXldQLtE0QTW8gmaV1d5MYuhGwg2AcgvtlISt4I7llFXx+CoW8auLwqAmgtb/TM+SX02SeTO3qWr1ge83bvjHlM+87G0x16hjrSwxbCUQhFzrGqAfo3gY2RGlgHyX9lptxhlk3Jp8L1zb7MucBuN+PsbmQ7RPOKSvQvTnkvl3HXwp21XNokAq0Tn7/DLFjd5PHUXbi8zyLqr8/R+3aWcnE5GlAK8j3mbHyOtXW8WcSfg/TCbS9JbqM8EuWD+cAso1sOoEvUyKbsxwZMx/QfWaBIOerAwmwz8oI9oCG16VEGd8DG+YofDJW90Uhq2WrHNF/od0FdJ9xpF0mGdaKojRyeQZfsc5kd5dgPnSXeVpO2uwC+5YUCnlW6vmA1nofAZu14eTGJs3mBZJXVVu5JBFAaKIP5ehUXBQyRvIPIQo50bSzQNu8w7gWKENIdsXj1gDY/1a6OEAZMfCt7PtbZYoKygkpcnwvW+KI/n8j8bd8/yS5lHaB7AJ7sUd+kORK2htTU9swAe37gZSNzFNS7yrD4WtMMqpE+4s9zXnGodkAvCHC9sjk9KOa8kSbJqDWsjnwtUemtQLuJOBMka+H/v8208HglYLJDyVz2VyWEv/9Kd6+ld7bpdXdKXJ9IwpQBo4YRE32Zfw6gVcU7MgE9DDwfxkVqV1jfZr+awbtErYifmMn3FcaItGcx4VqOkR7hkLROySbAi+ZvHcm/hkMzqtXi4ZSUcvcFljyD/nSt9VvXCFWAAAAAElFTkSuQmCC" alt="XW"> Xwadda Escrow</span><span><button class="g sm" onclick="goHome()">Home</button> <button class="sm" id="navBtn" onclick="authMode('login');show('auth')">Sign in</button></span></nav></header>
 <div class="w" id="pub"><div id="srvBanner" class="banner hide"><b>Cannot reach the Xwadda server.</b> Deals, accounts and chat need the server running. If this page is on GitHub Pages, set <code>XW_API</code> at the top of index.html to your server address (see README.txt).</div>
@@ -617,7 +674,8 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 <div class="card stat"><b>70,000+</b>trusted since 2023</div>
 <div class="card stat"><b>127k+</b>active users</div>
 <div class="card stat"><b>24/7</b>customer support</div></div>
-<div class="held"><small><span class="live"></span>HELD IN ESCROW RIGHT NOW</small><div class="hrow"><div><b id="hHeld">KES -</b><small>Kenya shillings</small></div><div><b id="hHeldU">- USDT</b><small>Tether</small></div></div><span id="hHeldSub">Updating live…</span></div><div class="duo"><div class="mbar sec"><small>TOTAL SECURED SINCE LAUNCH</small><b id="hSec">KES 0</b><em id="hSecU">0.00 USDT</em><span>Money that has passed through Xwadda escrow</span></div><div class="mbar lost"><small>LOST TO REPORTED SCAMMERS</small><b id="hLost">KES 0</b><em id="hLostU">0.00 USDT</em><span id="hLostSub">From confirmed scam reports</span></div></div>
+<div class="held" id="heldCard"><div class="held-top"><span class="live"><i></i>LIVE</span><span>HELD IN ESCROW RIGHT NOW</span></div><div class="held-grid"><div><small>KENYA SHILLINGS</small><b id="hHeld">KES 0</b></div><div><small>USDT</small><b id="hHeldU">0.00 USDT</b></div></div><div class="held-sub" id="hHeldSub">Updating live…</div><div class="held-bar"><span></span></div></div>
+<div class="tw"><div class="tcard sec" id="secCard"><small>TOTAL SECURED SINCE LAUNCH</small><b id="hSec">KES 0</b><span id="hSecU">≈ 0.00 USDT</span><em id="hSecSub">Money protected through escrow</em></div><div class="tcard lost" id="lostCard"><small>LOST TO REPORTED SCAMMERS</small><b id="hLost">KES 0</b><span id="hLostU">≈ 0.00 USDT</span><em id="hLostSub">Confirmed scam reports</em></div></div>
 
 <h2>How escrow works</h2><div class="band"><h2 class="bh" style="margin:0 0 6px">Four steps from agreement to payout</h2><p style="margin:0 0 20px">Every deal follows the same order, so both sides know what comes next.</p><div class="grid"><div class="st"><small>STEP 1</small><h3 style="margin:4px 0">Agree the terms</h3><p>Buyer and seller settle the item, the price, the delivery method and how long the buyer has to inspect it. We record it.</p></div><div class="st"><small>STEP 2</small><h3 style="margin:4px 0">Buyer pays into escrow</h3><p>The buyer sends the agreed amount to the escrow account shown for that deal, by M-Pesa or cryptocurrency. We confirm it arrived.</p></div><div class="st"><small>STEP 3</small><h3 style="margin:4px 0">Seller delivers</h3><p>Once we tell the seller the funds are held, they hand over the goods or complete the work. The buyer checks it against the agreed terms.</p></div><div class="st"><small>STEP 4</small><h3 style="margin:4px 0">Release or dispute</h3><p>The buyer confirms and we pay the seller, less our fee. If something is wrong, the buyer raises a dispute and we review it before any money moves.</p></div></div></div>
 
@@ -636,6 +694,7 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 <div id="stReg"><h2 style="margin-top:0">Create account</h2>
 <label>Full name</label><input id="rName" autocomplete="name">
 <label>Email</label><input id="rEmail" type="email" autocomplete="email">
+<label>Phone number (with country code)</label><div class="ph"><select class="cc" id="rCc"></select><input id="rPhone" type="tel" autocomplete="tel-national" placeholder="Phone number"></div>
 <label>Password</label><input id="rPw" type="password" autocomplete="new-password" oninput="pwCheck()">
 <label>Confirm password</label><input id="rPw2" type="password" autocomplete="new-password">
 <ul id="pwRules" class="mut" style="list-style:none;padding:0;margin:0 0 12px;font-size:13px"></ul>
@@ -653,7 +712,7 @@ details.card{padding:12px 16px}details summary{cursor:pointer;font-weight:700}
 
 </div>
 <section id="app" class="wide hide"><button class="g sm menuBtn" onclick="toggleMenu()">☰ Menu</button><div class="shell"><aside class="side" id="side"></aside><main class="main" id="view"></main></div></section>
-<footer><div class="w"><div class="fg"><div><b style="font-size:18px">Xwadda Escrow</b><p style="margin:6px 0 0">Funds held safely until both sides are happy.</p><p id="bld" style="margin:6px 0 0;font-size:12px;opacity:.7">page build r7</p></div><div><b>Quick links</b><a onclick="goHome()">Home</a><a onclick="authMode('login');show('auth')">Sign in</a><a onclick="openKiosk()">USDT kiosk</a></div><div><b>Contact</b><p style="margin:6px 0 0">📍 Westlands Business Park, Nairobi, Kenya<br>24/7 support<br>xwaddaescrow.co.ke</p></div></div><div class="fb">© 2026 Xwadda Escrow · All rights reserved. T&amp;Cs apply</div></div></footer><div id="toast"></div>
+<footer><div class="w"><div class="fg"><div><b style="font-size:18px">Xwadda Escrow</b><p style="margin:6px 0 0">Funds held safely until both sides are happy.</p></div><div><b>Quick links</b><a onclick="goHome()">Home</a><a onclick="authMode('login');show('auth')">Sign in</a><a onclick="openKiosk()">USDT kiosk</a></div><div><b>Contact</b><p style="margin:6px 0 0">📍 Westlands Business Park, Nairobi, Kenya<br>24/7 support<br>xwaddaescrow.co.ke</p></div></div><div class="fb">© 2026 Xwadda Escrow · All rights reserved. T&amp;Cs apply</div></div></footer><div id="toast"></div>
 <script>
 // ===== Xwadda Escrow client. All data lives on the server (see server.js), so deals work across devices. =====
 var API=(window.XW_API||'').replace(/\/+$/,''),TOKEN=null,POLL=null,CUR='';
@@ -661,7 +720,8 @@ var S={me:null,cfg:{rate:129,spr:1.5,payName:'',payPhone:'',addr:{}},rd:null,fd:
 try{TOKEN=localStorage.getItem('xw_token')}catch(e){}
 var $=function(i){return document.getElementById(i)};
 var ACT=['Pending','Verifying','Funded','Disputed'];
-var CC=[['KE','🇰🇪','+254'],['UG','🇺🇬','+256'],['TZ','🇹🇿','+255'],['RW','🇷🇼','+250'],['ET','🇪🇹','+251'],['NG','🇳🇬','+234'],['GH','🇬🇭','+233'],['ZA','🇿🇦','+27'],['EG','🇪🇬','+20'],['MA','🇲🇦','+212'],['ZM','🇿🇲','+260'],['ZW','🇿🇼','+263'],['CD','🇨🇩','+243'],['SS','🇸🇸','+211'],['SO','🇸🇴','+252'],['AE','🇦🇪','+971'],['SA','🇸🇦','+966'],['QA','🇶🇦','+974'],['TR','🇹🇷','+90'],['IN','🇮🇳','+91'],['PK','🇵🇰','+92'],['CN','🇨🇳','+86'],['JP','🇯🇵','+81'],['SG','🇸🇬','+65'],['MY','🇲🇾','+60'],['PH','🇵🇭','+63'],['ID','🇮🇩','+62'],['AU','🇦🇺','+61'],['GB','🇬🇧','+44'],['IE','🇮🇪','+353'],['DE','🇩🇪','+49'],['FR','🇫🇷','+33'],['IT','🇮🇹','+39'],['ES','🇪🇸','+34'],['NL','🇳🇱','+31'],['SE','🇸🇪','+46'],['CH','🇨🇭','+41'],['US','🇺🇸','+1'],['CA','🇨🇦','+1'],['BR','🇧🇷','+55'],['MX','🇲🇽','+52']];
+var CCD='KE254 UG256 TZ255 RW250 ET251 NG234 GH233 ZA27 EG20 MA212 ZM260 ZW263 CD243 SS211 SO252 AE971 SA966 QA974 TR90 IN91 PK92 CN86 JP81 SG65 MY60 PH63 ID62 AU61 GB44 IE353 DE49 FR33 IT39 ES34 NL31 SE46 CH41 US1 CA1 BR55 MX52 AD376 AF93 AL355 AM374 AO244 AR54 AT43 AZ994 BA387 BD880 BE32 BF226 BG359 BH973 BI257 BJ229 BN673 BO591 BT975 BW267 BY375 BZ501 CF236 CG242 CI225 CL56 CM237 CO57 CR506 CU53 CV238 CY357 CZ420 DJ253 DK45 DZ213 EC593 EE372 ER291 FI358 FJ679 GA241 GE995 GM220 GN224 GQ240 GR30 GT502 GW245 GY592 HK852 HN504 HR385 HT509 HU36 IL972 IQ964 IR98 IS354 JO962 KG996 KH855 KM269 KR82 KW965 KZ7 LA856 LB961 LI423 LK94 LR231 LS266 LT370 LU352 LV371 LY218 MC377 MD373 ME382 MG261 MK389 ML223 MM95 MN976 MO853 MR222 MT356 MU230 MV960 MW265 MZ258 NA264 NE227 NI505 NO47 NP977 NZ64 OM968 PA507 PE51 PG675 PL48 PS970 PT351 PY595 RO40 RS381 RU7 SC248 SD249 SI386 SK421 SL232 SN221 SR597 SV503 SY963 SZ268 TD235 TG228 TH66 TJ992 TL670 TM993 TN216 TW886 UA380 UY598 UZ998 VE58 VN84 YE967';
+var CC=CCD.split(' ').map(function(x){var iso=x.slice(0,2);return [iso,String.fromCodePoint(127397+iso.charCodeAt(0),127397+iso.charCodeAt(1)),'+'+x.slice(2)]});
 
 // ---------- helpers ----------
 function esc(t){return String(t==null?'':t).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -703,7 +763,7 @@ function go(v){ROUTE=v;try{history.pushState({r:v},'',location.href.split(/[?#]/
 function toggleMenu(){document.body.classList.toggle('menu')}
 function authMode(m){['Reg:reg','Login:login','Reset:reset','Key:key'].forEach(function(x){x=x.split(':');$('st'+x[0]).classList.toggle('hide',m!=x[1])})}
 function openKiosk(){if(!S.me){toast('Please sign in to trade USDT.');authMode('login');show('auth');try{sessionStorage.setItem('xw_ph','kiosk')}catch(e){}return}go('kiosk')}
-var MENU=[['WORKSPACE MENU',[['dash','▣','Dashboard']]],['DEALS',[['create','+','Create escrow'],['join','↗','Join with a code'],['broker','🤝','Join as broker'],['kiosk','₮','USDT kiosk']]],['ACCOUNT TOOLS',[['numbers','▦','My numbers'],['wallet','◆','Wallet & payouts'],['profile','☺','Profile']]],['DISCOVER',[['scan','⌕','Market scan'],['scam','●','Scam watch']]],['HELP',[['support','?','Support'],['official','☎','Xwadda numbers']]]];
+var MENU=[['WORKSPACE MENU',[['dash','▣','Dashboard']]],['DEALS',[['create','+','Create escrow'],['join','↗','Join a deal'],['broker','🤝','Join as broker'],['kiosk','₮','USDT kiosk']]],['ACCOUNT TOOLS',[['numbers','▦','My numbers'],['wallet','◆','Wallet & payouts'],['profile','☺','Profile']]],['DISCOVER',[['scan','⌕','Market scan'],['scam','●','Scam watch']]],['HELP',[['support','?','Support'],['official','☎','Xwadda numbers']]]];
 function buildSide(){var m=MENU.slice();if(S.me&&S.me.admin)m=m.concat([['ADMIN',[['admin','★','Admin dashboard']]]]);
   $('side').innerHTML=m.map(function(g){return '<h6>'+g[0]+'</h6>'+g[1].map(function(i){return '<a onclick="go(\''+i[0]+'\')" data-v="'+i[0]+'"><i>'+i[1]+'</i>'+i[2]+'</a>'}).join('')}).join('')+'<hr><a onclick="logout()"><i>⎋</i>Sign out</a>'}
 function route(){
@@ -737,7 +797,8 @@ function reg(){var n=$('rName').value.trim(),e=$('rEmail').value.trim(),p=$('rPw
   if(!n||!/\S+@\S+\.\S+/.test(e))return toast('Enter your full name and a valid email.');
   pwCheck();if(pwRules(p,n,e).some(function(x){return !x[1]}))return toast('Password is not strong enough yet. See the checklist.');
   if(p!==$('rPw2').value)return toast('Passwords do not match.');
-  api('POST','/api/register',{name:n,email:e,password:p}).then(function(r){setSession(r);$('rPw').value=$('rPw2').value='';pwCheck();showKey(r.recoveryKey,'Account created. Welcome '+r.user.name+'!')}).catch(fail)}
+  var ph=fullPhone('rCc',$('rPhone').value);if(!ph)return toast('Enter your phone number with its country code.');
+  api('POST','/api/register',{name:n,email:e,password:p,phone:ph}).then(function(r){setSession(r);$('rPw').value=$('rPw2').value='';pwCheck();showKey(r.recoveryKey,'Account created. Welcome '+r.user.name+'!')}).catch(fail)}
 function login(){var e=$('lEmail').value.trim(),p=$('lPw').value;if(!e||!p)return toast('Enter your email and password.');
   api('POST','/api/login',{email:e,password:p}).then(function(r){setSession(r);$('lPw').value='';enter('Welcome back, '+r.user.name+'!')}).catch(fail)}
 function resetPw(){var p=$('sPw').value;if(p!==$('sPw2').value)return toast('Passwords do not match.');
@@ -749,8 +810,8 @@ function logout(){api('POST','/api/logout',{}).catch(function(){});TOKEN=null;S.
 function balCard(){var b=S.me.bal||0;return '<div class="bal"><small>AVAILABLE BALANCE</small><div class="n">'+money(b)+'</div><div>'+usd(toUsdt(b,0))+'</div><div class="btns"><button class="wh" onclick="go(\'wallet\')">Withdraw</button><button onclick="go(\'create\')">Create escrow</button><button onclick="go(\'join\')">Join with a code</button></div></div>'}
 function dealsTable(list){if(!list.length)return '<span class="mut">No deals yet.</span>';
   return '<table><tr><th>Deal ID</th><th>Item</th><th>Your role</th><th>Amount</th><th>Status</th><th></th></tr>'+list.map(function(d){
-    var b='';if(d.role=='buyer'&&d.st=='Pending'&&d.bc&&d.sc)b=' <button class="sm" onclick="go(\'fund/'+d.id+'\')">Fund</button>';
-    return '<tr><td><b>'+d.id+'</b><div class="mut" style="font-size:12px">Code '+d.code+'</div></td><td style="white-space:normal;min-width:160px">'+esc(d.desc)+'</td><td class="cap">'+(d.role||'Support')+'</td><td>'+money(d.amt)+'</td><td>'+tag(d.st)+'</td><td><button class="g sm" onclick="go(\'room/'+d.id+'\')">Open room</button>'+b+'</td></tr>'}).join('')+'</table>'}
+    var b='';if((d.role=='buyer'||d.role=='broker')&&d.st=='Pending'&&d.bc&&d.sc)b=' <button class="sm" onclick="go(\'fund/'+d.id+'\')">Fund</button>';
+    return '<tr><td><b>'+d.id+'</b></td><td style="white-space:normal;min-width:160px">'+esc(d.desc)+'</td><td class="cap">'+(d.role||'Support')+'</td><td>'+money(d.amt)+'</td><td>'+tag(d.st)+'</td><td><button class="g sm" onclick="go(\'room/'+d.id+'\')">Open room</button>'+b+'</td></tr>'}).join('')+'</table>'}
 function page(eye,title,sub,body){$('view').innerHTML='<div class="pg"><div class="eyebrow">'+eye+'</div><h1>'+title+'</h1>'+(sub?'<p class="mut" style="margin:0 0 18px">'+sub+'</p>':'')+body+'</div>';fillCc()}
 
 var VIEWS={};
@@ -761,17 +822,17 @@ function paintDash(quiet){api('GET','/api/deals').then(function(r){if(CUR!='dash
   page('WORKSPACE','Welcome, '+esc(S.me.name.split(' ')[0]),'Your balance, deals and quick actions.','<div style="margin:0 0 12px"><button class="g sm" onclick="go(\'official\')">☎ Xwadda main numbers</button> <button class="g sm" onclick="go(\'broker\')">🤝 Join as broker</button></div>'+balCard()+'<div class="stats3"><div class="card"><small>ACTIVE · UNFINISHED</small><b>'+a+'</b></div><div class="card"><small>COMPLETED</small><b class="ok">'+c+'</b></div><div class="card"><small>ALL YOUR ROOMS</small><b>'+l.length+'</b></div></div><h2>Your deals</h2><div class="card tbl">'+dealsTable(l)+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
 
 // ---------- create / join ----------
-VIEWS.create=function(){page('DEALS','Create escrow','Set the terms, then share the join code with the other party.','<div class="fg2"><div class="card"><label>What is the deal for?</label><input id="dDesc" maxlength="200" placeholder="e.g. iPhone 13, 128GB"><div class="row2"><div><label>I am the</label><select id="dRole"><option>Buyer</option><option>Seller</option></select></div><div><label>Fee paid by</label><select id="dPay" onchange="fee()"><option>Buyer</option><option>Seller</option><option>Split 50-50</option></select></div></div><label>Amount</label><div class="ph"><select id="dCur" onchange="fee()" style="width:36%"><option>KES</option><option>USDT</option></select><input id="dAmt" type="number" min="0" oninput="fee()"></div><button id="mkBtn" onclick="mk()">Create deal</button></div><div class="card"><div class="ct">Live breakdown</div><p id="dFee" class="mut">Enter an amount to see the fee and totals.</p><p class="mut" style="font-size:14px">After you create the deal you get a Deal ID and a join code. The other party signs in, opens <b>Join with a code</b> and enters it, from any phone or computer.</p></div></div>')};
+VIEWS.create=function(){page('DEALS','Create escrow','Set the terms, then share the Deal ID with the other party.','<div class="fg2"><div class="card"><label>What is the deal for?</label><input id="dDesc" maxlength="200" placeholder="e.g. iPhone 13, 128GB"><div class="row2"><div><label>I am the</label><select id="dRole"><option>Buyer</option><option>Seller</option></select></div><div><label>Fee paid by</label><select id="dPay" onchange="fee()"><option>Buyer</option><option>Seller</option><option>Split 50-50</option></select></div></div><label>Amount</label><div class="ph"><select id="dCur" onchange="fee()" style="width:36%"><option>KES</option><option>USDT</option></select><input id="dAmt" type="number" min="0" oninput="fee()"></div><button id="mkBtn" onclick="mk()">Create deal</button></div><div class="card"><div class="ct">Live breakdown</div><p id="dFee" class="mut">Enter an amount to see the fee and totals.</p><p class="mut" style="font-size:14px">After you create the deal you get a Deal ID. The other party signs in, opens <b>Join a deal</b> and enters it, from any phone or computer. A broker joins the same way.</p></div></div>')};
 function kesAmt(){var a=+$('dAmt').value||0;return $('dCur').value=='USDT'?Math.round(a*(S.cfg.rate+S.cfg.spr)):a}
 function fee(){var a=kesAmt(),f=FEES(a),p=$('dPay').value,o=$('dFee');if(!a){o.textContent='Enter an amount to see the fee and totals.';return}
   var d={amt:a,fee:f,pay:p};o.innerHTML=($('dCur').value=='USDT'?'= '+money(a)+'<br>':'')+'Escrow fee: <b>'+(f?money(f):'KES 0 (free)')+'</b>, paid by '+p+'.<br>Buyer pays: <b>'+money(tot(d))+'</b><br>Seller receives: <b>'+money(net(d))+'</b>'}
 function mk(){var a=kesAmt();if(!$('dDesc').value.trim()||!a)return toast('Add a description and an amount.');$('mkBtn').disabled=true;
-  api('POST','/api/deals',{desc:$('dDesc').value,role:$('dRole').value,amount:+$('dAmt').value,cur:$('dCur').value,pay:$('dPay').value}).then(function(d){toast('Deal '+d.id+' created. Share join code '+d.code+' with the other party.');go('room/'+d.id)}).catch(function(e){$('mkBtn').disabled=false;fail(e)})}
-VIEWS.join=function(pre){page('DEALS','Join a deal','Join with the Deal ID (XW-…). The Deal ID is also the join code.','<div class="card" style="max-width:560px"><label>I am joining as</label><select id="jAs" onchange="jAsChg()"><option value="party">The other party (buyer or seller)</option><option value="broker">A broker</option></select><label id="jLbl">Join code or Deal ID</label><input id="jCode" placeholder="XWJ-XXXX-XXXX" autocomplete="off" onkeydown="if(event.key==\'Enter\')joinDeal()"><button onclick="joinDeal()">Join deal</button><p id="jNote" class="mut" style="font-size:14px;margin-bottom:0">You join as the opposite role to the person who created the deal. Works from any device.</p></div>');if(pre)$('jCode').value=pre.toUpperCase()};
+  api('POST','/api/deals',{desc:$('dDesc').value,role:$('dRole').value,amount:+$('dAmt').value,cur:$('dCur').value,pay:$('dPay').value}).then(function(d){toast('Deal '+d.id+' created. Share the Deal ID with the other party.');go('room/'+d.id)}).catch(function(e){$('mkBtn').disabled=false;fail(e)})}
+VIEWS.join=function(pre){page('DEALS','Join a deal','Enter the Deal ID (XW-…) you were given. Choose Broker if you are joining as a broker.','<div class="card" style="max-width:560px"><label>I am joining as</label><select id="jAs" onchange="jAsChg()"><option value="party">The other party (buyer or seller)</option><option value="broker">A broker</option></select><label>Deal ID</label><input id="jCode" placeholder="XW-XXXXXXXX" autocomplete="off" onkeydown="if(event.key==\'Enter\')joinDeal()"><button onclick="joinDeal()">Join deal</button><p id="jNote" class="mut" style="font-size:14px;margin-bottom:0">You join as the opposite role to the person who created the deal. Works from any device.</p></div>');if(pre)$('jCode').value=pre.toUpperCase()};
 VIEWS.broker=function(){VIEWS.join();$('jAs').value='broker';jAsChg()};
-function jAsChg(){var b=$('jAs').value=='broker';$('jLbl').textContent='Deal ID';$('jCode').placeholder='XW-XXXXXXXX';$('jNote').textContent=b?'Brokers can read and chat in the deal room, but cannot confirm, pay, release or cancel. The buyer or seller can remove you at any time.':'You join as the opposite role to the person who created the deal. Works from any device.'}
-function joinDeal(){var c=$('jCode').value.trim(),br=$('jAs').value=='broker';if(!c)return toast(br?'Enter the Deal ID.':'Enter the deal join code.');
-  api('POST','/api/join',{code:c,as:br?'broker':''}).then(function(r){toast(r.already?'You are already part of this deal.':'You joined deal '+r.id+(br?' as a broker.':'.'));go('room/'+r.id)}).catch(fail)}
+function jAsChg(){var b=$('jAs').value=='broker';$('jNote').textContent=b?'A broker joins before the deal is funded and lists their fee first. After funding a broker can top up, and can release funds only if the broker funded the deal. Joining is only possible while the deal is still unfunded.':'You join as the opposite role to the person who created the deal. Works from any device.'}
+function joinDeal(){var c=$('jCode').value.trim(),br=$('jAs').value=='broker';if(!c)return toast('Enter the Deal ID.');
+  api('POST','/api/join',{code:c,as:br?'broker':''}).then(function(r){toast(r.already?'You are already part of this deal.':'You joined deal '+r.id+(br?' as the broker.':'.'));go('room/'+r.id)}).catch(fail)}
 
 // ---------- USDT kiosk ----------
 VIEWS.kiosk=function(){page('DEALS','USDT kiosk','Instant buy and sell. Rates update from the server.','<div class="fg2"><div class="card"><label>Action</label><select id="kAct" onchange="kcalc()"><option value="buy">Buy USDT (pay M-Pesa)</option><option value="sell">Sell USDT (get M-Pesa)</option></select><label>Amount (USDT)</label><input id="kAmt" type="number" value="100" oninput="kcalc()"><p id="kOut" style="font-weight:700"></p><button onclick="kiosk()">Continue</button>'+
@@ -801,7 +862,7 @@ VIEWS.wallet=function(){api('GET','/api/wallet').then(function(r){S.me=r.user;va
   var sel=function(k,t){return '<option value="'+k+'"'+(w.pref==k?' selected':'')+'>'+t+'</option>'};
   page('ACCOUNT TOOLS','Wallet &amp; payouts','Withdraw your balance and choose where released money and refunds go.',balCard().replace('<button class="wh" onclick="go(\'wallet\')">Withdraw</button>','')+'<div class="fg2" style="margin-top:18px"><div class="card"><div class="ct">Withdraw</div>'+(opts?'<label>Amount (KES)</label><input id="wAmt" type="number" min="100" placeholder="Minimum KES 100"><label>Send to</label><select id="wDest">'+opts+'</select><button onclick="withdraw()">Request withdrawal</button><p class="mut" style="font-size:14px;margin-bottom:0">Withdrawals are reviewed and paid by our team, usually within a few hours.</p>':'<p class="mut">Add an M-Pesa number under <a href="#numbers">My numbers</a> or save payout details on the right first.</p>')+'</div>'+
   '<div class="card"><div class="ct">Payout &amp; refund details</div><label>Preferred method</label><select id="wPref">'+sel('mpesa','M-Pesa')+sel('bin','Binance ID')+sel('byb','Bybit ID')+sel('bg','Bitget ID')+sel('bep','USDT BEP20')+sel('trc','USDT TRC20')+sel('both','USDT BEP20 + TRC20 (both)')+'</select><label>M-Pesa number</label><div class="ph"><select class="cc" id="wCc"></select><input id="wMp" type="tel" placeholder="Phone number"></div><label>Binance ID</label><input id="wBin"><label>Bybit ID</label><input id="wByb"><label>Bitget ID</label><input id="wBg"><label>USDT BEP20 address</label><input id="wBep" placeholder="0x..."><label>USDT TRC20 address</label><input id="wTrc" placeholder="T..."><button onclick="saveW()">Save payout details</button></div></div>'+
-  '<h2>Transactions</h2><div class="card tbl">'+(r.tx.length?'<table><tr><th>Date</th><th>Type</th><th>Reference</th><th>Amount</th><th>Status</th></tr>'+r.tx.map(function(t){return '<tr><td>'+dt(t.ts)+'</td><td>'+({release:'Deal payout',refund:'Refund',withdraw:'Withdrawal',withdraw_refund:'Withdrawal returned'}[t.type]||t.type)+'</td><td>'+esc(t.ref)+'</td><td class="'+(t.a>0?'ok':'')+'"><b>'+(t.a>0?'+':'−')+money(Math.abs(t.a))+'</b></td><td>'+tag(t.st)+'</td></tr>'}).join('')+'</table>':'<span class="mut">No transactions yet.</span>')+'</div>');
+  '<h2>Transactions</h2><div class="card tbl">'+(r.tx.length?'<table><tr><th>Date</th><th>Type</th><th>Reference</th><th>Amount</th><th>Status</th></tr>'+r.tx.map(function(t){return '<tr><td>'+dt(t.ts)+'</td><td>'+({broker_fee:'Broker fee',release:'Deal payout',refund:'Refund',withdraw:'Withdrawal',withdraw_refund:'Withdrawal returned'}[t.type]||t.type)+'</td><td>'+esc(t.ref)+'</td><td class="'+(t.a>0?'ok':'')+'"><b>'+(t.a>0?'+':'−')+money(Math.abs(t.a))+'</b></td><td>'+tag(t.st)+'</td></tr>'}).join('')+'</table>':'<span class="mut">No transactions yet.</span>')+'</div>');
   $('wCc').value=sp[0];$('wMp').value=sp[1];$('wBin').value=w.bin||'';$('wByb').value=w.byb||'';$('wBg').value=w.bg||'';$('wBep').value=w.bep||'';$('wTrc').value=w.trc||''}).catch(fail)};
 function saveW(){var w={pref:$('wPref').value,mp:fullPhone('wCc',$('wMp').value),bin:$('wBin').value.trim(),byb:$('wByb').value.trim(),bg:$('wBg').value.trim(),bep:$('wBep').value.trim(),trc:$('wTrc').value.trim()};
   api('PUT','/api/wallet',{w:w}).then(function(u){S.me=u;toast('Payout and refund details saved.');VIEWS.wallet()}).catch(fail)}
@@ -822,12 +883,13 @@ function scC(w){var k=$('scK'),u=$('scV');if(w=='k')u.value=((+k.value||0)/(S.cf
 function scFee(){var a=+$('scF').value||0;$('scO').textContent=a?'Escrow fee: '+(FEES(a)?money(FEES(a)):'KES 0 (free)'):''}
 
 // ---------- scam watch ----------
-VIEWS.scam=function(){page('DISCOVER','Scam watch','Check a number, wallet, email or social handle before you pay. Reports are reviewed by our team before they count as a confirmed scam.','<div class="fg2"><div class="card"><div class="ct">Check before you pay</div><label>Phone number, wallet address, email or handle</label><input id="scVal" placeholder="e.g. 0712 345 678" onkeydown="if(event.key==\'Enter\')scCheck()"><button onclick="scCheck()">Check</button><div id="scRes" style="margin-top:12px"></div></div><div class="card"><div class="ct">Report a scam</div><label>What is it?</label><select id="srKind"><option>Phone number</option><option>Crypto wallet</option><option>Email</option><option>Social media handle</option><option>Website</option><option>Other</option></select><label>The number, address or handle</label><input id="srVal"><label>What happened?</label><input id="srNote" maxlength="500" placeholder="Short description"><label>Amount you lost (KES, optional)</label><input id="srAmt" type="number" min="0" placeholder="e.g. 5000"><button onclick="scReport()">Submit report</button></div></div><h2>Common tricks</h2><div class="grid"><div class="card"><b>Fake escrow pages</b><p class="mut">Only trust xwaddaescrow.co.ke. Our payment details appear only on your deal page.</p></div><div class="card"><b>"Pay outside the room"</b><p class="mut">Anyone asking you to pay to a number that is not on your deal page is a scammer.</p></div><div class="card"><b>PIN or OTP requests</b><p class="mut">We never ask for your M-Pesa PIN, password or OTP. Not in chat, not on a call.</p></div><div class="card"><b>Fake proof of payment</b><p class="mut">Screenshots and SMS can be faked. Only release funds after we confirm in the room.</p></div></div>')};
-function scCheck(){var v=$('scVal').value.trim();if(!v)return toast('Enter something to check.');api('GET','/api/scam/check?value='+encodeURIComponent(v)).then(function(r){var pend=r.pending?' '+r.pending+' more report'+(r.pending>1?'s are':' is')+' waiting for our team to review.':'';$('scRes').innerHTML=r.count?'<div class="banner" style="border-color:#c0392b"><b>⚠ CONFIRMED SCAM</b><div style="margin-top:4px">'+r.count+' confirmed report'+(r.count>1?'s':'')+' against this ('+esc(r.kinds.join(', '))+'). <b>Do not send money.</b>'+pend+'</div><div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0"><div class="card" style="flex:1;min-width:130px;text-align:center"><small class="mut">TOTAL LOST TO THIS SCAMMER</small><div style="font-size:22px;font-weight:800;color:#c0392b">'+(r.total?money(r.total):'Not stated')+'</div>'+(r.total?'<small class="mut">≈ '+(r.total/(r.rate||129)).toFixed(2)+' USDT</small>':'')+'</div><div class="card" style="flex:1;min-width:130px;text-align:center"><small class="mut">CONFIRMED REPORTS</small><div style="font-size:22px;font-weight:800">'+r.count+'</div></div></div>'+(r.reports||[]).map(function(x){return '<div style="margin-top:8px;font-size:13px;border-top:1px solid var(--bd);padding-top:6px"><b>'+esc(x.kind)+'</b> · '+(x.amt?'lost '+money(x.amt):'amount not stated')+' · '+dt(x.ts)+'<div>Reason: “'+esc(x.note)+'”</div></div>'}).join('')+'<div class="mut" style="font-size:12px;margin-top:8px">Based on reports confirmed by our team. This is not a court finding.</div></div>':'<div class="cn">No confirmed scam reports found.'+pend+' That does not prove it is safe. Keep deals inside the escrow room.</div>'}).catch(fail)}
-function scReport(){api('POST','/api/scam/report',{kind:$('srKind').value,value:$('srVal').value,note:$('srNote').value,amount:$('srAmt').value}).then(function(){$('srVal').value=$('srNote').value=$('srAmt').value='';toast('Thank you. Our team will review your report.')}).catch(fail)}
+VIEWS.scam=function(){page('DISCOVER','Scam watch','Check a number, wallet, email or social handle before you pay. Reports are reviewed by our team before they count as a confirmed scam.','<div class="fg2"><div class="card"><div class="ct">Check before you pay</div><label>Phone number, wallet address, email or handle</label><input id="scVal" placeholder="e.g. 0712 345 678" onkeydown="if(event.key==\'Enter\')scCheck()"><button onclick="scCheck()">Check</button><div id="scRes" style="margin-top:12px"></div></div><div class="card"><div class="ct">Report a scam</div><label>What is it?</label><select id="srKind"><option>Phone number</option><option>Crypto wallet</option><option>Email</option><option>Social media handle</option><option>Website</option><option>Other</option></select><label>The number, address or handle</label><input id="srVal"><label>What happened?</label><input id="srNote" maxlength="500" placeholder="Short description"><label>Amount you lost (KES, optional)</label><input id="srLost" type="number" min="0" placeholder="e.g. 5000"><button onclick="scReport()">Submit report</button></div></div><h2>Common tricks</h2><div class="grid"><div class="card"><b>Fake escrow pages</b><p class="mut">Only trust xwaddaescrow.co.ke. Our payment details appear only on your deal page.</p></div><div class="card"><b>"Pay outside the room"</b><p class="mut">Anyone asking you to pay to a number that is not on your deal page is a scammer.</p></div><div class="card"><b>PIN or OTP requests</b><p class="mut">We never ask for your M-Pesa PIN, password or OTP. Not in chat, not on a call.</p></div><div class="card"><b>Fake proof of payment</b><p class="mut">Screenshots and SMS can be faked. Only release funds after we confirm in the room.</p></div></div>')};
+function scCheck(){var v=$('scVal').value.trim();if(!v)return toast('Enter something to check.');api('GET','/api/scam/check?value='+encodeURIComponent(v)).then(function(r){var pend=r.pending?' '+r.pending+' more report'+(r.pending>1?'s are':' is')+' waiting for our team to review.':'';
+  $('scRes').innerHTML=r.count?'<div class="banner" style="border-color:#c0392b"><b>⚠ CONFIRMED SCAMMER. Do not send money.</b><div style="margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px"><div class="cn" style="margin:0"><small class="mut">CONFIRMED REPORTS</small><div style="font-size:22px;font-weight:800">'+r.count+'</div><div class="mut" style="font-size:12px">'+esc(r.kinds.join(', '))+'</div></div><div class="cn" style="margin:0"><small class="mut">TOTAL LOST TO THIS SCAMMER</small><div style="font-size:22px;font-weight:800;color:#c0392b">'+money(r.total)+'</div><div class="mut" style="font-size:12px">≈ '+fmtU(r.totalUsdt)+'</div></div></div><div style="margin-top:10px;font-size:13px"><b>What people reported</b></div>'+r.reports.map(function(x){return '<div class="cn" style="margin-top:6px"><div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap"><b style="color:#c0392b">'+(x.lost?money(x.lost)+' lost':'Amount not stated')+'</b><span class="mut" style="font-size:12px">'+dt(x.ts)+'</span></div><div style="font-size:14px;margin-top:4px">'+esc(x.note)+'</div></div>'}).join('')+(pend?'<div class="mut" style="margin-top:8px;font-size:13px">'+pend+'</div>':'')+'</div>':'<div class="cn">No confirmed scam reports found.'+pend+' That does not prove it is safe. Keep deals inside the escrow room.</div>'}).catch(fail)}
+function scReport(){api('POST','/api/scam/report',{kind:$('srKind').value,value:$('srVal').value,note:$('srNote').value,lost:$('srLost').value}).then(function(){$('srVal').value=$('srNote').value=$('srLost').value='';toast('Thank you. Our team will review your report.')}).catch(fail)}
 
 // ---------- support ----------
-VIEWS.support=function(){page('HELP','Support','We are here 24/7.','<div class="fg2"><div class="card"><div class="ct">Message our team</div><label>How can we help?</label><input id="spMsg" maxlength="1500" placeholder="Describe the problem. Include a Deal ID if you have one."><button onclick="spSend()">Send to support</button><p class="mut" style="font-size:14px;margin-bottom:0">📍 Westlands Business Park, Nairobi, Kenya · xwaddaescrow.co.ke<br>Inside a deal room, type <b>human</b> to call an agent into that room.</p></div><div><details class="card"><summary>How do I join a deal from another phone?</summary><p class="mut">Sign in on that phone, open <b>Join with a code</b> and enter the XWJ code (or open the invite link). Everything is stored on our server, so it works on any device.</p></details><details class="card" style="margin-top:10px"><summary>Which chat commands does the bot understand?</summary><p class="mut">deal id, status, confirm, fund, paid, release, cancel deal, dispute, fees, summary, people, rates, balance, human and help. Plain sentences work too.</p></details><details class="card" style="margin-top:10px"><summary>When is my money released?</summary><p class="mut">When the buyer confirms delivery (type <b>release</b>) or after support settles a dispute. Released money lands in the seller balance, then they withdraw it.</p></details></div></div>')};
+VIEWS.support=function(){page('HELP','Support','We are here 24/7.','<div class="fg2"><div class="card"><div class="ct">Message our team</div><label>How can we help?</label><input id="spMsg" maxlength="1500" placeholder="Describe the problem. Include a Deal ID if you have one."><button onclick="spSend()">Send to support</button><p class="mut" style="font-size:14px;margin-bottom:0">📍 Westlands Business Park, Nairobi, Kenya · xwaddaescrow.co.ke<br>Inside a deal room, type <b>human</b> to call an agent into that room.</p></div><div><details class="card"><summary>How do I join a deal from another phone?</summary><p class="mut">Sign in on that phone, open <b>Join a deal</b> and enter the Deal ID (or open the invite link). Everything is stored on our server, so it works on any device.</p></details><details class="card" style="margin-top:10px"><summary>Which chat commands does the bot understand?</summary><p class="mut">deal id, status, confirm, fund, paid, release, cancel deal, dispute, fees, summary, people, rates, balance, human and help. Plain sentences work too.</p></details><details class="card" style="margin-top:10px"><summary>When is my money released?</summary><p class="mut">When the buyer confirms delivery (type <b>release</b>) or after support settles a dispute. Released money lands in the seller balance, then they withdraw it.</p></details></div></div>')};
 function spSend(){api('POST','/api/support',{msg:$('spMsg').value}).then(function(){$('spMsg').value='';toast('Message sent. Our team will reply by email.')}).catch(fail)}
 
 // ---------- deal room ----------
@@ -836,8 +898,8 @@ VIEWS.room=function(id){api('GET','/api/deals/'+encodeURIComponent(id||'')).then
   paintRoom(true);startPoll(pollRoom,2500)}).catch(function(e){fail(e);go('dash')})};
 function pollRoom(){if(!S.rd||CUR!='room')return;api('GET','/api/deals/'+S.rd.id+'?v='+S.rd.v).then(function(d){if(d.same||CUR!='room')return;S.rd=d;paintRoom(false)}).catch(function(){})}
 function cardHtml(t,d){
-  if(t=='welcome')return '<div class="ct">👋 Welcome to your escrow room</div>'+kv([['Deal ID','<b>'+d.id+'</b>'],['Join code','<b>'+d.code+'</b>'],['Deal',esc(d.desc)],['Buyer','🧑 '+esc(d.buyer.name)],['Seller','🧑 '+esc(d.seller.name)],['Review window','1 hour']])+((!d.buyer.joined||!d.seller.joined)?'<div class="cn">⏳ Waiting for the other party. Ask them to sign in, open <b>Join with a code</b> and enter <b>'+d.code+'</b>, or send them the invite link from the side panel.</div>':'')+'<div class="cn">Type “help” to see what I can do.</div>';
-  return '<div class="ct">📋 Deal summary</div>'+kv([['Amount',money(d.amt)+' <span class="mut">≈ '+usd(toUsdt(d.amt,1))+'</span>'],['Escrow fee',(d.fee?money(d.fee):'KES 0')+' <span class="mut">paid by '+d.pay+'</span>'],['Buyer pays','<b>'+money(d.total)+'</b> <span class="mut">or '+usd(toUsdt(d.total,1))+'</span>'],['Seller receives','<b>'+money(d.net)+'</b> <span class="mut">or '+usd(toUsdt(d.net,0))+'</span>'],['Payout method',esc(d.payoutDest)],['Refund method',esc(d.refundDest)]])+'<div class="cn">🔒 Payment details stay hidden until both sides confirm.</div>'}
+  if(t=='welcome')return '<div class="ct">👋 Welcome to your escrow room</div>'+kv([['Deal ID','<b>'+d.id+'</b>'],['Deal',esc(d.desc)],['Buyer','🧑 '+esc(d.buyer.name)],['Seller','🧑 '+esc(d.seller.name)],['Review window','1 hour']])+((!d.buyer.joined||!d.seller.joined)?'<div class="cn">⏳ Waiting for the other party. Ask them to sign in, open <b>Join a deal</b> and enter <b>'+d.id+'</b>, or send them the invite link from the side panel.</div>':'')+'<div class="cn">Type “help” to see what I can do.</div>';
+  return '<div class="ct">📋 Deal summary</div>'+kv([['Amount',money(d.amt)+' <span class="mut">≈ '+usd(toUsdt(d.amt,1))+'</span>'],['Escrow fee',(d.fee?money(d.fee):'KES 0')+' <span class="mut">paid by '+d.pay+'</span>'],['Buyer pays','<b>'+money(d.total)+'</b> <span class="mut">or '+usd(toUsdt(d.total,1))+'</span>'],['Seller receives','<b>'+money(d.net)+'</b> <span class="mut">or '+usd(toUsdt(d.net,0))+'</span>'],['Payout method',esc(d.payoutDest)],['Refund method',esc(d.refundDest)]].concat(d.bf?[['Broker fee',money(d.bf.amt)+' <span class="mut">paid by '+d.bf.by+'</span>']]:[]))+(d.needBf?'<div class="cn">⏳ A broker is in this deal. Waiting for the broker to list their fee before the buyer and seller confirm.</div>':'')+'<div class="cn">🔒 Payment details stay hidden until both sides confirm.</div>'}
 function paintRoom(force){var d=S.rd,me=S.me;if(!$('rMsgs'))return;
   $('rPeople').innerHTML=[['🤖','Xwadda Escrow Bot','Admin'],['🧑',d.buyer.name,'Buyer'],['🧑',d.seller.name,'Seller']].concat((d.brokers||[]).map(function(b){return ['🤝',b.name,'Broker']})).map(function(p){return '<span class="tag" style="padding:6px 10px">'+p[0]+' <b>'+esc(p[1])+'</b> '+p[2]+'</span>'}).join('');
   var m=$('rMsgs'),near=m.scrollHeight-m.scrollTop-m.clientHeight<90;
@@ -845,31 +907,30 @@ function paintRoom(force){var d=S.rd,me=S.me;if(!$('rMsgs'))return;
     return '<div class="msg '+cls+'"><b class="who">'+(b?'🤖 Xwadda Escrow Bot':esc(x.n)+(x.adm?' · Support':'')+(x.br?' · Broker':''))+'</b>'+(x.card?cardHtml(x.card,d):'<div class="tx">'+esc(x.t)+'</div>')+'<div class="tm">'+tm(x.ts)+'</div></div>'}).join('');
   if(near||force)m.scrollTop=m.scrollHeight;
   var done=function(c){return c?' class="d"':''},both=d.buyer.joined&&d.seller.joined,funded=['Funded','Released','Disputed'].indexOf(d.st)>-1||(d.st=='Refunded'&&d.cancel&&d.cancel.buyer);
-  var h='<div class="card"><div class="ct">Deal '+d.id+' '+tag(d.st)+'</div>'+kv([['Item',esc(d.desc)],['Amount',money(d.amt)],['Buyer pays',money(d.total)+(d.bfee?' (incl. broker fee '+money(d.bfee)+')':'')],['Seller receives',money(d.net)],['Your role','<span class="cap">'+(d.role||(d.broker?'broker':'Support'))+'</span>']])+
-   '<div class="cn" style="margin-top:12px">Join code <b>'+d.code+'</b><div style="margin-top:6px"><button class="g sm" onclick="copyCode(\''+d.code+'\')">Copy code</button> <button class="g sm" onclick="copyLink(\''+d.code+'\')">Invite link</button></div></div>'+
+  var h='<div class="card"><div class="ct">Deal '+d.id+' '+tag(d.st)+'</div>'+kv([['Item',esc(d.desc)],['Amount',money(d.amt)],['Buyer pays',money(d.total)],['Seller receives',money(d.net)],['Your role','<span class="cap">'+(d.role||(d.broker?'broker':'Support'))+'</span>']].concat(d.bf?[['Broker fee',money(d.bf.amt)+' ('+d.bf.by+')']]:[],(d.st!='Pending'&&d.funder)?[['Funded by',esc(d.funder)]]:[],d.topSum?[['Held now',money(d.held)]]:[]))+
+   '<div class="cn" style="margin-top:12px">Deal ID <b>'+d.id+'</b><div style="margin-top:6px"><button class="g sm" onclick="copyCode(\''+d.id+'\')">Copy ID</button> <button class="g sm" onclick="copyLink(\''+d.id+'\')">Invite link</button></div></div>'+
    '<ul class="steps"><li'+done(both)+'>'+(both?'✓':'○')+' Both parties joined</li><li'+done(d.bc&&d.sc)+'>'+(d.bc&&d.sc?'✓':'○')+' Terms confirmed</li><li'+done(funded)+'>'+(funded?'✓':'○')+' Funds held in escrow</li><li'+done(d.st=='Released')+'>'+(d.st=='Released'?'✓':'○')+' Released to seller</li></ul></div>';
   var a='',r=d.role;
-  if(r=='buyer'&&!d.bc&&d.st=='Pending')a+=((d.brokers||[]).length&&!d.bset)?'<button class="g" disabled>Waiting for broker to list their fee…</button>':'<button onclick="act(\'confirm\')">✅ Confirm as Buyer</button>';
-  if(r=='seller'&&!d.sc&&d.st=='Pending')a+='<button onclick="act(\'confirm\')">✅ Confirm as Seller</button>';
-  if(r=='buyer'&&d.st=='Pending'&&d.bc&&d.sc)a+='<button onclick="go(\'fund/'+d.id+'\')">💳 Fund this deal</button>';
-  if(r=='buyer'&&d.st=='Funded')a+='<button onclick="act(\'release\')">✔ Release funds to seller</button>';
+  if(r=='buyer'&&!d.bc&&d.st=='Pending')a+=d.needBf?'<div class="mut" style="font-size:13px">⏳ Waiting for the broker to list their fee. You can confirm after that.</div>':'<button onclick="act(\'confirm\')">✅ Confirm as Buyer</button>';
+  if(r=='seller'&&!d.sc&&d.st=='Pending')a+=d.needBf?'<div class="mut" style="font-size:13px">⏳ Waiting for the broker to list their fee. You can confirm after that.</div>':'<button onclick="act(\'confirm\')">✅ Confirm as Seller</button>';
+  if((r=='buyer'||(d.broker&&!r))&&d.st=='Pending'&&d.bc&&d.sc)a+='<button onclick="go(\'fund/'+d.id+'\')">💳 Fund this deal'+(d.broker&&!r?' (as broker)':'')+'</button>';
+  if(d.canRelease)a+='<button onclick="act(\'release\')">✔ Release funds to seller</button>';else if(r=='buyer'&&d.st=='Funded')a+='<div class="mut" style="font-size:13px">The broker funded this deal, so the broker releases the funds. If something is wrong, raise a dispute.</div>';
   if(r&&d.st=='Funded')a+='<button class="g" onclick="act(\'dispute\')">⚠ Raise a dispute</button>';
   if(r&&(d.st=='Pending'||d.st=='Funded'))a+=(d.cancel&&d.cancel[r])?'<button class="g" disabled>Cancel requested…</button>':'<button class="g" onclick="act(\'cancel\')">'+(d.st=='Funded'?'Ask to cancel &amp; refund':'Cancel deal')+'</button>';
   if(r=='seller'&&d.st!='Released')a+='<div><label>Seller payout currency</label><select onchange="setPayout(this.value)"><option'+(d.payout=='KES'?' selected':'')+'>KES</option><option'+(d.payout=='USDT'?' selected':'')+'>USDT</option></select></div>';
-  if(d.broker&&!d.role){if(d.st=='Pending'&&!d.bc)a+='<button onclick="brokerFee()">'+(d.bset?'Update my fee / amount':'List my fee / amount')+'</button>';
-    if(d.st=='Pending'&&d.bc&&d.sc)a+='<button onclick="go(\'fund/'+d.id+'\')">💳 Fund this deal</button>';
-    if(d.st=='Funded'){a+='<button class="g" onclick="topUp()">➕ Top up held funds</button>';if(d.myFunded)a+='<button onclick="act(\'release\')">✔ Release funds to seller</button>'}}
-  if(d.admin){a+='<div class="mut" style="font-size:13px">Support view · '+esc(d.buyerEmail||'-')+' / '+esc(d.sellerEmail||'-')+'</div>';
+  if(d.admin){a+='<div class="mut" style="font-size:13px">Support view · people in this deal</div><div style="font-size:12px;margin:4px 0 8px">'+peopleHtml(d.people)+'</div>';
     if(d.st=='Verifying'||(d.st=='Pending'&&d.bc&&d.sc))a+='<button onclick="act(\'fund\')">Confirm funds received</button>';
     if(d.st=='Funded'||d.st=='Disputed')a+='<button onclick="act(\'release\')">Release to seller</button><button class="g" onclick="act(\'refund\')">Refund buyer</button>'}
   h+='<div class="card"><div class="ct">Actions</div><div class="acts">'+(a||'<span class="mut">No actions right now.</span>')+'</div></div>';
+  if(d.broker&&!d.role&&d.st=='Pending')h+='<div class="card"><div class="ct">Your broker fee</div>'+(d.bf?'<p>Listed: <b>'+money(d.bf.amt)+'</b>, paid by '+d.bf.by+'.</p>':'<p class="mut" style="font-size:14px">List your fee before the deal is funded. The buyer and seller can confirm after you do.</p>')+'<label>Fee (KES)</label><input id="bfA" type="number" min="0" value="'+(d.bf?d.bf.amt:'')+'"><label>Paid by</label><select id="bfBy">'+['Buyer','Seller','Split 50-50'].map(function(o){return '<option'+(d.bf&&d.bf.by==o?' selected':'')+'>'+o+'</option>'}).join('')+'</select><button style="margin-top:10px" onclick="setBf()">'+(d.bf?'Update fee':'List my fee')+'</button></div>';
+  if(d.topInfo)h+='<div class="card"><div class="ct">➕ Top up escrow</div><p class="mut" style="font-size:14px">Add more money to the funds held for this deal. Send it to the details below, then tell us.</p><p style="margin:4px 0">M-Pesa: <b>'+esc(d.topInfo.phone)+'</b> ('+esc(d.topInfo.name)+')</p><p class="addr" style="font-size:12px;margin:4px 0">USDT BEP20: '+esc(d.topInfo.addr['USDT BEP20'])+'</p><p class="addr" style="font-size:12px;margin:4px 0">USDT TRC20: '+esc(d.topInfo.addr['USDT TRC20'])+'</p><label>Amount sent (KES)</label><input id="tuA" type="number" min="100"><label>Method</label><select id="tuM"><option>M-Pesa</option><option>USDT BEP20</option><option>USDT TRC20</option></select><button style="margin-top:10px" onclick="topUp()">I have sent the top-up</button></div>';
+  if((d.topups||[]).length)h+='<div class="card"><div class="ct">Top-ups</div>'+d.topups.map(function(t){return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin:6px 0;flex-wrap:wrap"><span>'+money(t.a)+' · '+esc(t.by)+' '+tag(t.st)+'</span>'+(d.admin&&t.st=='Verifying'?'<span><button class="sm" onclick="topAct(\''+t.id+'\',\'confirm\')">Confirm</button> <button class="g sm" onclick="topAct(\''+t.id+'\',\'reject\')">Reject</button></span>':'')+'</div>'}).join('')+'</div>';
   if((d.brokers||[]).length){h+='<div class="card"><div class="ct">Brokers</div>'+d.brokers.map(function(b){return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><span>🤝 '+esc(b.name)+'</span>'+((d.role||d.admin||b.me)?'<button class="g sm" onclick="rmBroker(\''+b.bid+'\')">'+(b.me?'Leave':'Remove')+'</button>':'')+'</div>'}).join('')+'</div>'}
-  if(d.acct){h+='<div class="card" style="border-color:var(--ac)"><div class="ct">🔐 Account sale</div><p style="margin:0">Seller: send the account logins in <b>this chat panel</b> (not WhatsApp, email or DMs) so the handover is tracked. Buyer: check the login works, then confirm. Never share your M-Pesa PIN or OTP.</p></div>'}
-  if((d.brokers||[]).length){h+='<div class="card"><div class="ct">Broker terms</div>'+(d.bset?'<p style="margin:0">Fee: <b>'+money(d.bfee)+'</b>'+(d.bamt?' · Broker funds up to <b>'+money(d.bamt)+'</b>':'')+'</p>':'<p class="mut" style="margin:0">The broker has not listed their fee or amount yet. The buyer can confirm once they do.</p>')+(d.top?'<p>Top-ups held: <b>'+money(d.top)+'</b></p>':'')+(d.tops||[]).map(function(t){return '<div style="display:flex;justify-content:space-between;gap:8px;font-size:13px;margin-top:4px"><span>'+t.id+' · '+esc(t.by)+' · '+money(t.amt)+'</span><span>'+tag(t.st)+(d.admin&&t.st=='Verifying'?' <button class="sm" onclick="topupOk(\''+t.id+'\')">Confirm</button>':'')+'</span></div>'}).join('')+'</div>'}
   $('rSide').innerHTML=h}
-function brokerFee(){var d=S.rd,f=prompt('Your broker fee in KES (0 or more):');if(f===null)return;var m=prompt('Optional: amount you will fund in KES (leave empty to skip):','');api('POST','/api/deals/'+d.id+'/brokerfee',{fee:+f,amt:+m||0}).then(function(r){applyDeal(r);toast('Broker fee listed.')}).catch(fail)}
-function topUp(){var d=S.rd,a=prompt('Top-up amount in KES (min 100).'+(d.payInfo?' Send it first by M-Pesa to '+d.payInfo.phone+' ('+d.payInfo.name+') or to the wallet on the Fund page.':''));if(a===null)return;api('POST','/api/deals/'+d.id+'/topup',{amount:+a}).then(function(r){applyDeal(r);toast('Top-up reported. We will verify it.')}).catch(fail)}
-function topupOk(t){api('POST','/api/deals/'+S.rd.id+'/topupok',{tid:t}).then(function(r){applyDeal(r);toast('Top-up confirmed.')}).catch(fail)}
+function setBf(){api('POST','/api/deals/'+S.rd.id+'/broker-fee',{amount:+$('bfA').value,by:$('bfBy').value}).then(function(d){applyDeal(d);toast('Broker fee listed.')}).catch(fail)}
+function topUp(){var a=+$('tuA').value;if(!(a>=100))return toast('Enter an amount of at least KES 100.');api('POST','/api/deals/'+S.rd.id+'/topup',{amount:a,method:$('tuM').value}).then(function(d){applyDeal(d);toast('Thanks. We will confirm your top-up shortly.')}).catch(fail)}
+function topAct(t,a){api('POST','/api/deals/'+S.rd.id+'/topup/'+t,{action:a}).then(function(d){applyDeal(d);toast('Updated.')}).catch(fail)}
+function adTop(id,t){api('POST','/api/deals/'+id+'/topup/'+t,{action:'confirm'}).then(function(){paintAdmin();toast('Top-up confirmed.')}).catch(fail)}
 function rmBroker(bid){if(!confirm('Remove this broker from the deal?'))return;api('POST','/api/deals/'+S.rd.id+'/brokers/remove',{bid:bid}).then(function(r){if(r.left){toast('You left the deal.');go('dash')}else applyDeal(r)}).catch(fail)}
 function applyDeal(d){S.rd=d;paintRoom(false)}
 function act(a){var d=S.rd,q={release:'Release '+money(d.net)+' to the seller? This cannot be undone.',dispute:'Raise a dispute? Funds will be frozen until our team reviews it.',cancel:d.st=='Funded'?'Ask to cancel? The other party must also agree, then the buyer is refunded.':'Cancel this deal?',refund:'Refund the buyer?'}[a];
@@ -882,8 +943,8 @@ function rsend(){var i=$('rIn'),t=i.value.trim();if(!t||!S.rd)return;i.value='';
 
 // ---------- fund ----------
 VIEWS.fund=function(id){api('GET','/api/deals/'+encodeURIComponent(id||'')).then(function(d){
-  if(!d.payInfo||(d.role!='buyer'&&!(d.broker&&!d.role))){toast(d.role=='buyer'||d.broker?'Both parties must confirm in the deal room first.':'Only the buyer or a broker funds the deal.');return go('room/'+d.id)}
-  S.fd=d;var t=d.total;page('DEALS','Fund '+d.id,'Pay exactly the amount below. Funds stay held until you confirm delivery.','<div class="fg2"><div class="card"><p>Deal total: <b>'+money(t)+'</b></p><p class="mut" style="margin-top:-6px">≈ '+usd(toUsdt(t,1))+' if paying in USDT (rate 1 USDT = KES '+(S.cfg.rate-S.cfg.spr)+')</p><label>Method</label><select id="fM" onchange="fm()"><option value="mpesa">M-Pesa (KES)</option><option>USDT BEP20</option><option>USDT TRC20</option></select>'+
+  var isBr=d.broker&&!d.role;if(!d.payInfo||(d.role!='buyer'&&!isBr)){toast(d.role=='buyer'||isBr?'Both parties must confirm in the deal room first.':'Only the buyer or the broker funds the deal.');return go('room/'+d.id)}
+  S.fd=d;var t=d.total;page('DEALS','Fund '+d.id,(isBr?'You are funding as the broker, so you will be the one who releases these funds. ':'')+'Pay exactly the amount below. Funds stay held until delivery is confirmed.','<div class="fg2"><div class="card"><p>Deal total: <b>'+money(t)+'</b></p><p class="mut" style="margin-top:-6px">≈ '+usd(toUsdt(t,1))+' if paying in USDT (rate 1 USDT = KES '+(S.cfg.rate-S.cfg.spr)+')</p><label>Method</label><select id="fM" onchange="fm()"><option value="mpesa">M-Pesa (KES)</option><option>USDT BEP20</option><option>USDT TRC20</option></select>'+
   '<div id="fMp"><div class="card tint"><p style="margin:0">Send <b>'+money(t)+'</b> by M-Pesa (Send Money) to:</p><p style="font-size:22px;font-weight:800;margin:6px 0">'+esc(d.payInfo.phone)+'</p><p style="margin:0">Name: <b>'+esc(d.payInfo.name)+'</b></p><p style="margin:6px 0 0;font-size:14px">Add Deal ID <b>'+d.id+'</b> in your payment note if you can.</p></div></div>'+
   '<div id="fCr" class="hide"><div class="card tint" style="margin-bottom:10px"><p style="margin:0">Send exactly <b id="fUs"></b> to the address below. We convert it to KES for the deal automatically.</p></div><div id="qr" style="background:#fff;padding:10px;display:inline-block;border-radius:8px"></div><p class="addr" id="fAd"></p></div>'+
   '<button style="margin-top:12px" onclick="paid()">I have sent the payment</button> <button class="g" onclick="go(\'room/'+d.id+'\')">Back to room</button></div>'+
@@ -896,38 +957,46 @@ function paid(){var d=S.fd;api('POST','/api/deals/'+d.id+'/paid',{method:$('fM')
 // ---------- admin ----------
 VIEWS.admin=function(){paintAdmin();startPoll(function(){paintAdmin(1)},8000)};
 function paintAdmin(quiet){api('GET','/api/admin').then(function(r){if(CUR!='admin')return;var s=r.stats;
-  page('ADMIN','Admin dashboard','','<div class="stats3">'+[['Users',s.users],['Deals',s.deals],['Volume',money(s.volume)],['Fees earned',money(s.fees)],['Held in escrow',s.held+' deal'+(s.held==1?'':'s')+' · '+money(s.heldKes||0)+' · '+((s.heldKes||0)/(r.rate||129)).toFixed(2)+' USDT'],['Reports to review',s.reports]].map(function(x){return '<div class="card"><small>'+x[0].toUpperCase()+'</small><b>'+x[1]+'</b></div>'}).join('')+'</div>'+
+  page('ADMIN','Admin dashboard','','<div class="stats3">'+[['Users',s.users],['Deals',s.deals],['Volume',money(s.volume)],['Fees earned',money(s.fees)],['Held in escrow',s.held],['Reports to review',s.reports]].map(function(x){return '<div class="card"><small>'+x[0].toUpperCase()+'</small><b>'+x[1]+'</b></div>'}).join('')+'</div>'+
   '<div class="card" style="margin-top:14px;max-width:420px"><div class="ct">USDT mid rate</div><div class="ph"><input id="adRate" type="number" step="0.1" value="'+r.rate+'" style="margin:0"><button onclick="adRate()">Save</button></div></div>'+
-  '<h2>Newest users (last 30)</h2><div class="card tbl">'+(r.users&&r.users.length?'<table><tr><th>Joined</th><th>Name</th><th>Email</th><th>Phone</th></tr>'+r.users.map(function(u){return '<tr><td>'+dt(u.ts)+'</td><td>'+esc(u.name)+'</td><td>'+esc(u.email)+'</td><td>'+esc(u.phone||'-')+'</td></tr>'}).join('')+'</table><p class="mut" style="margin:8px 0 0;font-size:13px">Passwords are stored hashed and cannot be viewed by anyone, including admins. A user who forgets theirs resets it with their recovery key.</p>':'<span class="mut">No users yet.</span>')+'</div>'+'<h2>Withdrawals</h2><div class="card tbl">'+(r.withdrawals.length?'<table><tr><th>Date</th><th>User</th><th>Amount</th><th>Send to</th><th>Status</th><th></th></tr>'+r.withdrawals.map(function(w){return '<tr><td>'+dt(w.ts)+'</td><td>'+esc(w.e)+'</td><td><b>'+money(w.a)+'</b></td><td>'+esc(w.ref)+'</td><td>'+tag(w.st)+'</td><td>'+(w.st=='Pending'?'<button class="sm" onclick="adDo(\'withdrawals\',\''+w.id+'\',\'pay\')">Mark paid</button> <button class="g sm" onclick="adDo(\'withdrawals\',\''+w.id+'\',\'reject\')">Reject</button>':'')+'</td></tr>'}).join('')+'</table>':'<span class="mut">None.</span>')+'</div>'+
+  '<h2>Withdrawals</h2><div class="card tbl">'+(r.withdrawals.length?'<table><tr><th>Date</th><th>User</th><th>Amount</th><th>Send to</th><th>Status</th><th></th></tr>'+r.withdrawals.map(function(w){return '<tr><td>'+dt(w.ts)+'</td><td>'+esc(w.e)+'</td><td><b>'+money(w.a)+'</b></td><td>'+esc(w.ref)+'</td><td>'+tag(w.st)+'</td><td>'+(w.st=='Pending'?'<button class="sm" onclick="adDo(\'withdrawals\',\''+w.id+'\',\'pay\')">Mark paid</button> <button class="g sm" onclick="adDo(\'withdrawals\',\''+w.id+'\',\'reject\')">Reject</button>':'')+'</td></tr>'}).join('')+'</table>':'<span class="mut">None.</span>')+'</div>'+
   '<h2>Kiosk orders</h2><div class="card tbl">'+(r.orders.length?'<table><tr><th>Order</th><th>User</th><th>Type</th><th>USDT</th><th>KES</th><th>Details</th><th>Status</th><th></th></tr>'+r.orders.map(function(o){return '<tr><td>'+o.id+'</td><td>'+esc(o.e)+'</td><td>'+o.action+'</td><td>'+o.usdt+'</td><td>'+money(o.kes)+'</td><td>'+esc(o.to)+'</td><td>'+tag(o.st)+'</td><td>'+(o.st=='Pending'?'<button class="sm" onclick="adDo(\'orders\',\''+o.id+'\',\'done\')">Done</button> <button class="g sm" onclick="adDo(\'orders\',\''+o.id+'\',\'reject\')">Reject</button>':'')+'</td></tr>'}).join('')+'</table>':'<span class="mut">None.</span>')+'</div>'+
   '<h2>Open support tickets</h2><div class="card tbl">'+(r.tickets.length?'<table><tr><th>Date</th><th>User</th><th>Message</th><th></th></tr>'+r.tickets.map(function(t){return '<tr><td>'+dt(t.ts)+'</td><td>'+esc(t.e)+'</td><td style="white-space:normal;min-width:240px">'+esc(t.msg)+'</td><td>'+(t.deal?'<button class="g sm" onclick="go(\'room/'+esc(t.deal)+'\')">Room</button> ':'')+'<button class="sm" onclick="adDo(\'tickets\',\''+t.id+'\',\'close\')">Close</button></td></tr>'}).join('')+'</table>':'<span class="mut">None.</span>')+'</div>'+
-  '<h2>Scam reports to review</h2><div class="card tbl">'+((r.scam&&r.scam.pending.length)?'<table><tr><th>Date</th><th>Number / handle</th><th>Type</th><th>What happened</th><th>Reporter</th><th>Reports</th><th></th></tr>'+r.scam.pending.map(function(x){return '<tr><td>'+dt(x.ts)+'</td><td><b>'+esc(x.v)+'</b></td><td>'+esc(x.kind)+'</td><td style="white-space:normal;min-width:220px">'+esc(x.note)+'</td><td style="font-size:13px">'+esc(x.e)+'</td><td>'+x.n+'</td><td><button class="sm" onclick="adScam(\''+x.id+'\',\'confirm\')">Confirm scam</button> <button class="g sm" onclick="adScam(\''+x.id+'\',\'reject\')">Reject</button></td></tr>'}).join('')+'</table>':'<span class="mut">Nothing waiting.</span>')+'</div>'+
-  '<h2>Confirmed scam list</h2><div class="card tbl">'+((r.scam&&r.scam.confirmed.length)?'<table><tr><th>Number / handle</th><th>Type</th><th>Reports</th><th>Confirmed</th><th>By</th><th></th></tr>'+r.scam.confirmed.map(function(x){return '<tr><td><b>'+esc(x.v)+'</b></td><td>'+esc(x.kind)+'</td><td>'+x.n+'</td><td>'+dt(x.ct)+'</td><td style="font-size:13px">'+esc(x.by)+'</td><td><button class="g sm" onclick="adScam(\''+x.id+'\',\'remove\')">Remove</button></td></tr>'}).join('')+'</table>':'<span class="mut">Empty.</span>')+'</div>'+
-  '<div class="card" style="margin-top:12px;max-width:560px"><div class="ct">Add a confirmed scam number</div><label>Number, wallet, email or handle</label><input id="asV"><label>Type</label><select id="asK"><option>Phone number</option><option>Crypto wallet</option><option>Email</option><option>Social media handle</option><option>Website</option><option>Other</option></select><label>Note shown to people who search</label><input id="asN" maxlength="500" placeholder="Short description"><button onclick="adScamAdd()">Add to scam list</button></div>'+
-  '<h2>All deals</h2><div class="card tbl">'+(r.deals.length?'<table><tr><th>Deal</th><th>Item</th><th>Buyer / Seller</th><th>Amount</th><th>Status</th><th></th></tr>'+r.deals.map(function(d){var b='';
+  '<h2>Scam reports to review</h2><div class="card tbl">'+((r.scam&&r.scam.pending.length)?'<table><tr><th>Date</th><th>Number / handle</th><th>Type</th><th>What happened</th><th>Lost</th><th>Reporter</th><th>Reports</th><th></th></tr>'+r.scam.pending.map(function(x){return '<tr><td>'+dt(x.ts)+'</td><td><b>'+esc(x.v)+'</b></td><td>'+esc(x.kind)+'</td><td style="white-space:normal;min-width:220px">'+esc(x.note)+'</td><td>'+money(x.lost||0)+'</td><td style="font-size:13px">'+esc(x.e)+'</td><td>'+x.n+'</td><td><button class="sm" onclick="adScam(\''+x.id+'\',\'confirm\')">Confirm scam</button> <button class="g sm" onclick="adScam(\''+x.id+'\',\'reject\')">Reject</button></td></tr>'}).join('')+'</table>':'<span class="mut">Nothing waiting.</span>')+'</div>'+
+  '<h2>Confirmed scam list</h2><div class="card tbl">'+((r.scam&&r.scam.confirmed.length)?'<table><tr><th>Number / handle</th><th>Type</th><th>Reports</th><th>Total lost</th><th>Confirmed</th><th>By</th><th></th></tr>'+r.scam.confirmed.map(function(x){return '<tr><td><b>'+esc(x.v)+'</b></td><td>'+esc(x.kind)+'</td><td>'+x.n+'</td><td>'+money(x.lost||0)+'</td><td>'+dt(x.ct)+'</td><td style="font-size:13px">'+esc(x.by)+'</td><td><button class="g sm" onclick="adScam(\''+x.id+'\',\'remove\')">Remove</button></td></tr>'}).join('')+'</table>':'<span class="mut">Empty.</span>')+'</div>'+
+  '<div class="card" style="margin-top:12px;max-width:560px"><div class="ct">Add a confirmed scam number</div><label>Number, wallet, email or handle</label><input id="asV"><label>Type</label><select id="asK"><option>Phone number</option><option>Crypto wallet</option><option>Email</option><option>Social media handle</option><option>Website</option><option>Other</option></select><label>Note shown to people who search</label><input id="asN" maxlength="500" placeholder="Short description"><label>Total amount lost to this scammer (KES, optional)</label><input id="asL" type="number" min="0"><button onclick="adScamAdd()">Add to scam list</button></div>'+
+  '<h2>All deals</h2><div class="card tbl">'+(r.deals.length?'<table><tr><th>Deal</th><th>Item</th><th>People</th><th>Amount</th><th>Status</th><th></th></tr>'+r.deals.map(function(d){var b='';
     if(d.st=='Verifying'||(d.st=='Pending'&&d.bc&&d.sc))b+=' <button class="sm" onclick="adDeal(\''+d.id+'\',\'fund\')">Confirm funds</button>';
-    if(d.st=='Funded'||d.st=='Disputed')b+=' <button class="sm" onclick="adDeal(\''+d.id+'\',\'release\')">Release</button> <button class="g sm" onclick="adDeal(\''+d.id+'\',\'refund\')">Refund</button>';
-    return '<tr><td><b>'+d.id+'</b><div class="mut" style="font-size:12px">'+dt(d.at)+'</div></td><td style="white-space:normal;min-width:140px">'+esc(d.desc)+'</td><td style="font-size:13px">'+esc(d.buyerEmail||'-')+'<br>'+esc(d.sellerEmail||'-')+'</td><td>'+money(d.amt)+'</td><td>'+tag(d.st)+'</td><td><button class="g sm" onclick="go(\'room/'+d.id+'\')">Room</button>'+b+'</td></tr>'}).join('')+'</table>':'<span class="mut">No deals.</span>')+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
+    if(d.st=='Funded'||d.st=='Disputed')b+=' <button class="sm" onclick="adDeal(\''+d.id+'\',\'release\')">Release</button> <button class="g sm" onclick="adDeal(\''+d.id+'\',\'refund\')">Refund</button>';if(d.tpid)b+=' <button class="sm" onclick="adTop(\''+d.id+'\',\''+d.tpid+'\')">Confirm top-up</button>';
+    return '<tr><td><b>'+d.id+'</b><div class="mut" style="font-size:12px">'+dt(d.at)+'</div></td><td style="white-space:normal;min-width:140px">'+esc(d.desc)+'</td><td style="font-size:12px;white-space:normal;min-width:240px">'+peopleHtml(d.people)+'</td><td>'+money(d.amt)+'</td><td>'+tag(d.st)+'</td><td><button class="g sm" onclick="go(\'room/'+d.id+'\')">Room</button>'+b+'</td></tr>'}).join('')+'</table>':'<span class="mut">No deals.</span>')+'</div>')}).catch(function(e){if(!quiet)fail(e)})}
+function peopleHtml(l){return (l||[]).length?l.map(function(p){return '<div style="margin-bottom:6px"><b>'+p.role+'</b>: '+esc(p.name)+'<br>'+esc(p.email)+'<br>'+(p.phone?'<a href="tel:'+esc(p.phone)+'">'+esc(p.phone)+'</a>':'<span class="mut">no phone on file</span>')+'</div>'}).join(''):'<span class="mut">-</span>'}
 function adRate(){api('POST','/api/admin/rate',{rate:+$('adRate').value}).then(function(r){S.cfg.rate=r.rate;toast('Rate saved.')}).catch(fail)}
 function adDo(k,id,a){api('POST','/api/admin/'+k+'/'+id,{action:a}).then(function(){paintAdmin();toast('Updated.')}).catch(fail)}
 function adScam(id,a){if(a=='remove'&&!confirm('Remove this from the confirmed scam list?'))return;api('POST','/api/admin/scam/'+id,{action:a}).then(function(){paintAdmin();toast(a=='confirm'?'Confirmed. It now shows as a scam in searches.':'Updated.')}).catch(fail)}
-function adScamAdd(){api('POST','/api/admin/scam',{value:$('asV').value,kind:$('asK').value,note:$('asN').value}).then(function(){toast('Added to the scam list.');paintAdmin()}).catch(fail)}
+function adScamAdd(){api('POST','/api/admin/scam',{value:$('asV').value,kind:$('asK').value,note:$('asN').value,lost:$('asL').value}).then(function(){toast('Added to the scam list.');paintAdmin()}).catch(fail)}
 function adDeal(id,a){if((a=='release'||a=='refund')&&!confirm((a=='release'?'Release funds to the seller':'Refund the buyer')+' for '+id+'?'))return;api('POST','/api/deals/'+id+'/'+a,{}).then(function(){paintAdmin();toast('Updated.')}).catch(fail)}
 
 // ---------- public escrow counter + official numbers ----------
-var HELD_SHOWN=0,HELD_T=null;
-var CU={};function cu(k,to,rt){var a=$(k),b=$(k+'U');if(!a)return;var from=CU[k]||0,t0=Date.now();CU[k]=to;var iv=setInterval(function(){var p=Math.min(1,(Date.now()-t0)/900),v=Math.round(from+(to-from)*p);a.textContent=money(v);b.textContent=(v/rt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' USDT';if(p>=1)clearInterval(iv)},40)}
-var DEMO_V=0,DEMO_T=0;function demoHeld(){var n=Date.now();if(!DEMO_V||n-DEMO_T>=600000){DEMO_V=Math.round((57000+Math.random()*(750000-57000))/100)*100;DEMO_T=n}return DEMO_V}
-function heldPoll(){api('GET','/api/public/stats').then(function(r){var el=$('hHeld');if(!el)return;var from=HELD_SHOWN,to=window.XW_DEMO_HELD?demoHeld():(r.held||0),t0=Date.now(),u=$('hHeldU'),rt=r.rate||129;clearInterval(HELD_T);
-  HELD_T=setInterval(function(){var k=Math.min(1,(Date.now()-t0)/900),v=Math.round(from+(to-from)*k);el.textContent=money(v);u.textContent=(v/rt).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' USDT';if(k>=1){clearInterval(HELD_T);HELD_SHOWN=to}},40);
-  $('hHeldSub').textContent=window.XW_DEMO_HELD?'':(r.deals?r.deals+' funded deal'+(r.deals>1?'s':'')+' · ':'No funded deals right now · ')+'updates live';var bl=$('bld');if(bl)bl.textContent='page build r7 · backend build '+(r.build||'OLD, redeploy server.js');cu('hSec',r.secured||0,rt);cu('hLost',r.lost||0,rt);$('hLostSub').textContent=r.lostN?'From '+r.lostN+' confirmed scam report'+(r.lostN>1?'s':'')+'. Check a number in Scam watch.':'No confirmed scam losses reported'}).catch(function(){})}
-var XNUMS=['+254745020932','+254742845204','+254727723257','+254745322228'];
+var CT={},LAST={},POLL1=true;
+function fmtU(v){return v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+' USDT'}
+function fmtK(v){return money(Math.round(v))}
+function ctrTo(id,val,fmt){var el=$(id);if(!el)return;var c=CT[id]||(CT[id]={v:0,t:null}),from=c.v,t0=Date.now();clearInterval(c.t);c.t=setInterval(function(){var k=Math.min(1,(Date.now()-t0)/900),e=1-Math.pow(1-k,3);c.v=from+(val-from)*e;el.textContent=fmt(c.v);if(k>=1){clearInterval(c.t);c.v=val}},40)}
+function popIf(card,key,val){if(!POLL1&&LAST[key]!=val){var c=$(card);if(c){c.classList.remove('pop');void c.offsetWidth;c.classList.add('pop')}}LAST[key]=val}
+function heldPoll(){api('GET','/api/public/stats').then(function(r){if(!$('hHeld'))return;
+  popIf('heldCard','h',r.held);popIf('secCard','s',r.secured);popIf('lostCard','l',r.lost);POLL1=false;
+  ctrTo('hHeld',r.held||0,fmtK);ctrTo('hHeldU',r.usdt||0,fmtU);
+  ctrTo('hSec',r.secured||0,fmtK);ctrTo('hSecU',r.securedUsdt||0,function(v){return '≈ '+fmtU(v)});
+  ctrTo('hLost',r.lost||0,fmtK);ctrTo('hLostU',r.lostUsdt||0,function(v){return '≈ '+fmtU(v)});
+  $('hHeldSub').textContent=(r.deals?r.deals+' funded deal'+(r.deals>1?'s':'')+' protected right now':'No funded deals right now')+' · updates every few seconds';
+  $('hSecSub').textContent=(r.securedDeals||0)+' deal'+(r.securedDeals==1?'':'s')+' secured through escrow';
+  $('hLostSub').textContent=(r.scamReports||0)+' confirmed scam report'+(r.scamReports==1?'':'s')+' · always check before you pay'}).catch(function(){})}
+var XNUMS=['+254745020932','+254727723257'];
 VIEWS.official=function(){page('HELP','Xwadda main numbers','Our official lines. If a number is not on this list, it is not us.','<div class="grid">'+XNUMS.map(function(n,i){return '<div class="card"><small class="mut">XWADDA LINE '+(i+1)+'</small><b style="display:block;font-size:20px;margin:4px 0 12px">'+n.replace(/^\+254(\d{3})(\d{3})(\d{3})$/,'+254 $1 $2 $3')+'</b><button class="sm" onclick="location.href=\'tel:'+n+'\'">Call</button> <button class="g sm" onclick="copyCode(\''+n+'\')">Copy</button></div>'}).join('')+'</div><div class="card tint" style="margin-top:14px"><b>Stay safe</b><p style="margin:6px 0 0">Use these numbers to reach our team. Pay only to the details shown on your deal page or kiosk order page, and never share your M-Pesa PIN, password or OTP with anyone, including us.</p></div>')};
 
 // ---------- start ----------
 function homeRates(){api('GET','/api/config').then(function(c){S.cfg.rate=c.rate;S.cfg.spr=c.spr;$('hBuy').textContent='KES '+(c.rate+c.spr).toFixed(2);$('hSell').textContent='KES '+(c.rate-c.spr).toFixed(2)}).catch(function(){
   $('srvBanner').classList.remove('hide')})}
-window.addEventListener('load',function(){fillCc();pwCheck();homeRates();heldPoll();setInterval(function(){if(!$('home').classList.contains('hide'))heldPoll()},10000);
+window.addEventListener('load',function(){fillCc();pwCheck();homeRates();heldPoll();setInterval(function(){if(!$('home').classList.contains('hide'))heldPoll()},5000);
   var jm=/[?&]join=([^&#]+)/.exec(location.search)||/#join=([^&]+)/.exec(location.hash);
   if(jm){try{ROUTE='join='+jm[1]}catch(e){}}
   try{if(location.search||location.hash)history.replaceState(null,'',location.href.split(/[?#]/)[0])}catch(e){}
