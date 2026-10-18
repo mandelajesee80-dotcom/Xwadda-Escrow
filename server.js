@@ -302,7 +302,7 @@ function hear(d, u, raw) {
   if (T(/^(help|menu|commands?|options|what can you do|how does this work|how to use|\?)/)) return bot(d, HELP);
   if (T(/^(hi|hello|hey|hallo|habari|niaje|sasa|mambo|good (morning|afternoon|evening))\b/) && words.length <= 3) return bot(d, 'Hello ' + u.name.split(' ')[0] + '! Deal ' + d.id + ' is ' + d.st + '. Type "help" to see what I can do.');
   if (T(/\b(thanks?|thank you|asante)\b/) && words.length <= 3) return bot(d, 'You are welcome. I am here if you need anything.');
-  if (words.length <= 3 || addressed) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
+  if ((words.length <= 3 || addressed) && !(isAdmin(u) && !role)) return bot(d, 'I did not catch that. Try: deal id, status, fund, confirm, release, cancel deal, dispute, fees or help.');
 }
 
 /* ---------- routes ---------- */
