@@ -184,6 +184,8 @@ function doFunded(d, u) {
   if (!isAdmin(u)) bad('Only Xwadda staff can confirm received funds.', 403);
   if (d.st != 'Verifying' && !(d.st == 'Pending' && d.bc && d.sc)) bad('This deal is not waiting for payment confirmation.');
   d.st = 'Funded'; bot(d, 'Funds received and held in escrow. Seller: you can now deliver. ' + (funderOf(d) == d.buyer ? 'Buyer: check the delivery, then type "release" (or "dispute" if something is wrong).' : nameOf(funderOf(d)) + ' (the broker who funded this deal) releases the funds once delivery is confirmed. Buyer or seller: type "dispute" if something is wrong.'));
+
+  bot(d, '🔐 Selling an online writing, academic or freelancing account?\n\nSeller: send the account logins here in this chat room (username or email, password, and any recovery email, phone number or 2FA details). Please keep everything inside this room, never on WhatsApp, calls or email, so the delivery is recorded and Xwadda support can review it if there is a dispute.\n\nBuyer: log in, check that the account works and matches what was agreed, then follow the release steps above. If anything is wrong, type \"dispute\" and the funds stay frozen while support reviews the record here.\n\nNever share your M-Pesa PIN or OTP with anyone.');
 }
 function credit(email, a, type, ref, note) { db.tx.push({ id: rid('TX-', 8), e: email, a, type, ref, note: note || '', st: 'Done', ts: Date.now() }); }
 function doRelease(d, u, dry) {
