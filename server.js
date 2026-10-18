@@ -520,8 +520,8 @@ R('POST', '/api/support', c => {
 R('GET', '/api/admin', c => {
   const rel = db.deals.filter(d => d.st == 'Released');
   return {
-    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, reports: db.reports.filter(x => reportSt(x) == 'pending').length },
-    rate: rate(), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
+    stats: { users: Object.keys(db.users).length, deals: db.deals.length, volume: rel.reduce((s, d) => s + d.amt, 0), fees: rel.reduce((s, d) => s + d.fee, 0), held: db.deals.filter(d => d.st == 'Funded').length, heldKes: db.deals.filter(d => d.st == 'Funded').reduce((a, d) => a + d.amt + (d.top || 0), 0), reports: db.reports.filter(x => reportSt(x) == 'pending').length },
+    rate: rate(), users: Object.values(db.users).sort((a, b) => (b.created || 0) - (a.created || 0)).slice(0, 20).map(u => ({ name: u.name, email: u.email, phone: u.phone || '', ts: u.created || 0 })), deals: db.deals.slice().reverse().map(d => row(d, c.u)),
     withdrawals: db.tx.filter(t => t.type == 'withdraw').slice(-100).reverse().map(t => ({ id: t.id, e: t.e, a: -t.a, ref: t.ref, st: t.st, ts: t.ts })),
     orders: db.orders.slice(-100).reverse(), tickets: db.tickets.filter(t => t.st == 'open').reverse(), scam: scamLists()
   };
