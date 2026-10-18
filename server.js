@@ -353,7 +353,7 @@ R('GET', '/api/public/stats', c => {
   lim('ps:' + c.ip, 240, 6e4);
   const h = db.deals.filter(d => d.st == 'Funded' || d.st == 'Disputed');
   const sec = db.deals.filter(d => ['Funded', 'Released', 'Disputed', 'Refunded'].includes(d.st)), cf = db.reports.filter(x => reportSt(x) == 'confirmed');
-  return { held: h.reduce((s, d) => s + d.amt + (d.top || 0), 0), rate: rate(), deals: h.length, secured: sec.reduce((s, d) => s + d.amt + (d.top || 0), 0), lost: cf.reduce((s, x) => s + (x.amt || 0), 0), lostN: cf.length, build: 'r8', t: Date.now() };
+  return { held: h.reduce((s, d) => s + d.amt + (d.top || 0), 0), rate: rate(), deals: h.length, secured: sec.reduce((s, d) => s + d.amt + (d.top || 0), 0), lost: cf.reduce((s, x) => s + (x.amt || 0), 0), lostN: cf.length, build: 'r9', t: Date.now() };
 }, { pub: 1 });
 
 /* deals */
