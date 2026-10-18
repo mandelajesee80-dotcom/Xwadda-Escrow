@@ -99,7 +99,7 @@ setInterval(() => { const t = Date.now(); for (const [k, h] of hits) if (h.r < t
 const BADPW = ['password', 'passw0rd', 'qwerty', '123456', 'abcdef', 'letmein', 'welcome', 'iloveyou', 'admin', 'xwadda', 'escrow', 'mpesa'];
 function pwProblems(p, n, e) {
   p = String(p || ''); const l = p.toLowerCase(), loc = lc(e).split('@')[0], first = lc(n).split(/\s+/)[0], out = [];
-  if (p.length < 12) out.push('at least 12 characters'); if (!/[A-Z]/.test(p)) out.push('an uppercase letter');
+  if (p.length < 8) out.push('at least 8 characters'); if (!/[A-Z]/.test(p)) out.push('an uppercase letter');
   if (!/[a-z]/.test(p)) out.push('a lowercase letter'); if (!/[0-9]/.test(p)) out.push('a number'); if (!/[^A-Za-z0-9]/.test(p)) out.push('a symbol');
   if (BADPW.some(w => l.includes(w)) || (loc.length > 2 && l.includes(loc)) || (first.length > 2 && l.includes(first))) out.push('no common words or your name/email');
   if (/(.)\1\1/.test(p)) out.push('no 3 repeated characters in a row');

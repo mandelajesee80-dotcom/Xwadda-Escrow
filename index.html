@@ -86,7 +86,7 @@ setInterval(() => { const t = Date.now(); for (const [k, h] of hits) if (h.r < t
 const BADPW = ['password', 'passw0rd', 'qwerty', '123456', 'abcdef', 'letmein', 'welcome', 'iloveyou', 'admin', 'xwadda', 'escrow', 'mpesa'];
 function pwProblems(p, n, e) {
   p = String(p || ''); const l = p.toLowerCase(), loc = lc(e).split('@')[0], first = lc(n).split(/\s+/)[0], out = [];
-  if (p.length < 12) out.push('at least 12 characters'); if (!/[A-Z]/.test(p)) out.push('an uppercase letter');
+  if (p.length < 8) out.push('at least 8 characters'); if (!/[A-Z]/.test(p)) out.push('an uppercase letter');
   if (!/[a-z]/.test(p)) out.push('a lowercase letter'); if (!/[0-9]/.test(p)) out.push('a number'); if (!/[^A-Za-z0-9]/.test(p)) out.push('a symbol');
   if (BADPW.some(w => l.includes(w)) || (loc.length > 2 && l.includes(loc)) || (first.length > 2 && l.includes(first))) out.push('no common words or your name/email');
   if (/(.)\1\1/.test(p)) out.push('no 3 repeated characters in a row');
@@ -773,7 +773,7 @@ window.addEventListener('popstate',function(e){ROUTE=(e.state&&e.state.r)||'';if
 // ---------- accounts ----------
 var BADPW=['password','passw0rd','qwerty','123456','abcdef','letmein','welcome','iloveyou','admin','xwadda','escrow','mpesa'],pendMsg='';
 function pwRules(p,n,e){var l=(p||'').toLowerCase(),loc=(e||'').split('@')[0].toLowerCase(),first=(n||'').trim().split(/\s+/)[0].toLowerCase();
-  return [['At least 12 characters',p.length>=12],['An uppercase letter',/[A-Z]/.test(p)],['A lowercase letter',/[a-z]/.test(p)],['A number',/[0-9]/.test(p)],['A symbol (e.g. ! @ # $ %)',/[^A-Za-z0-9]/.test(p)],
+  return [['At least 8 characters',p.length>=8],['An uppercase letter',/[A-Z]/.test(p)],['A lowercase letter',/[a-z]/.test(p)],['A number',/[0-9]/.test(p)],['A symbol (e.g. ! @ # $ %)',/[^A-Za-z0-9]/.test(p)],
   ['No common words or your name/email',!BADPW.some(function(w){return l.indexOf(w)>-1})&&!(loc.length>2&&l.indexOf(loc)>-1)&&!(first.length>2&&l.indexOf(first)>-1)],['No 3 repeated characters in a row',!/(.)\1\1/.test(p)]]}
 function pwCheck(){var r=pwRules($('rPw').value,$('rName').value,$('rEmail').value);$('pwRules').innerHTML=r.map(function(x){return '<li style="color:'+(x[1]?'#15803d':'inherit')+'">'+(x[1]?'✓ ':'○ ')+x[0]+'</li>'}).join('')}
 function togglePw(){['rPw','rPw2','lPw','sPw','sPw2'].forEach(function(i){var e=$(i);if(e)e.type=e.type=='password'?'text':'password'})}
@@ -861,7 +861,7 @@ function withdraw(){var a=+$('wAmt').value;if(!(a>=100))return toast('Minimum wi
   api('POST','/api/withdraw',{amount:a,dest:$('wDest').value}).then(function(){toast('Withdrawal of '+money(a)+' requested.');VIEWS.wallet()}).catch(fail)}
 
 // ---------- profile ----------
-VIEWS.profile=function(){var sp=splitPhone(S.me.phone);page('ACCOUNT TOOLS','Profile','','<div class="fg2"><div class="card"><label>Name</label><input id="pName" value="'+esc(S.me.name)+'"><label>Email</label><input value="'+esc(S.me.email)+'" disabled><label>Phone</label><div class="ph"><select class="cc" id="pCc"></select><input id="pPhone" type="tel" value="'+esc(sp[1])+'"></div><button onclick="saveP()">Save changes</button></div><div class="card"><div class="ct">Change password</div><label>Current password</label><input id="cpOld" type="password" autocomplete="current-password"><label>New password (12+ characters, upper, lower, number, symbol)</label><input id="cpNew" type="password" autocomplete="new-password"><button onclick="chPw()">Change password</button></div></div>');$('pCc').value=sp[0]};
+VIEWS.profile=function(){var sp=splitPhone(S.me.phone);page('ACCOUNT TOOLS','Profile','','<div class="fg2"><div class="card"><label>Name</label><input id="pName" value="'+esc(S.me.name)+'"><label>Email</label><input value="'+esc(S.me.email)+'" disabled><label>Phone</label><div class="ph"><select class="cc" id="pCc"></select><input id="pPhone" type="tel" value="'+esc(sp[1])+'"></div><button onclick="saveP()">Save changes</button></div><div class="card"><div class="ct">Change password</div><label>Current password</label><input id="cpOld" type="password" autocomplete="current-password"><label>New password (8+ characters, upper, lower, number, symbol)</label><input id="cpNew" type="password" autocomplete="new-password"><button onclick="chPw()">Change password</button></div></div>');$('pCc').value=sp[0]};
 function saveP(){api('PUT','/api/profile',{name:$('pName').value,phone:fullPhone('pCc',$('pPhone').value)}).then(function(u){S.me=u;toast('Profile updated.')}).catch(fail)}
 function chPw(){api('POST','/api/password',{cur:$('cpOld').value,next:$('cpNew').value}).then(function(){$('cpOld').value=$('cpNew').value='';toast('Password changed.')}).catch(fail)}
 
@@ -980,7 +980,7 @@ function heldPoll(){api('GET','/api/public/stats').then(function(r){if(!$('hHeld
   $('hHeldSub').textContent=(r.deals?r.deals+' funded deal'+(r.deals>1?'s':'')+' protected right now':'No funded deals right now')+' · updates every few seconds';
   $('hSecSub').textContent=(r.securedDeals||0)+' deal'+(r.securedDeals==1?'':'s')+' secured through escrow';
   $('hLostSub').textContent=(r.scamReports||0)+' confirmed scam report'+(r.scamReports==1?'':'s')+' · always check before you pay'}).catch(function(){})}
-var XNUMS=['+254745020932','+254742845204','+254727723257','+254745322228'];
+var XNUMS=['+254745020932','+254727723257'];
 VIEWS.official=function(){page('HELP','Xwadda main numbers','Our official lines. If a number is not on this list, it is not us.','<div class="grid">'+XNUMS.map(function(n,i){return '<div class="card"><small class="mut">XWADDA LINE '+(i+1)+'</small><b style="display:block;font-size:20px;margin:4px 0 12px">'+n.replace(/^\+254(\d{3})(\d{3})(\d{3})$/,'+254 $1 $2 $3')+'</b><button class="sm" onclick="location.href=\'tel:'+n+'\'">Call</button> <button class="g sm" onclick="copyCode(\''+n+'\')">Copy</button></div>'}).join('')+'</div><div class="card tint" style="margin-top:14px"><b>Stay safe</b><p style="margin:6px 0 0">Use these numbers to reach our team. Pay only to the details shown on your deal page or kiosk order page, and never share your M-Pesa PIN, password or OTP with anyone, including us.</p></div>')};
 
 // ---------- start ----------
